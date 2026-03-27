@@ -286,35 +286,24 @@
       ]
     },
     {
-      "parameters": {
-        "select": "channel",
-        "channelId": {
-          "__rl": true,
-          "value": "C08NX15CMEJ",
-          "mode": "id"
-        },
-        "messageType": "block",
-        "blocksUi": "={{ $json.blocksStr }}",
-        "text": "={{ $json.text }}",
-        "otherOptions": {
-          "includeLinkToWorkflow": false,
-          "botProfile": {
-            "imageValues": {
-              "profilePhotoType": "emoji",
-              "icon_emoji": "chart_with_upwards_trend"
-            }
-          }
-        }
-      },
       "id": "d28a4bcb-ce52-48f6-b52d-a444fbbd2af6",
       "name": "Slack: Daily Alert",
-      "type": "n8n-nodes-base.slack",
-      "typeVersion": 2.2,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [
         2352,
         0
       ],
-      "webhookId": "3d0e0180-0297-4888-9477-14f0514cfa89",
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: 'C08NX15CMEJ', text: $json.text, blocks: $json.blocks, unfurl_links: false }) }}",
+        "options": {}
+      },
       "credentials": {
         "slackApi": {
           "id": "INNGkyGYO6M06N8D",
@@ -567,35 +556,24 @@
       ]
     },
     {
-      "parameters": {
-        "select": "channel",
-        "channelId": {
-          "__rl": true,
-          "value": "C08NX15CMEJ",
-          "mode": "id"
-        },
-        "messageType": "block",
-        "blocksUi": "={{ $json.blocksStr }}",
-        "text": "={{ $json.text }}",
-        "otherOptions": {
-          "includeLinkToWorkflow": false,
-          "botProfile": {
-            "imageValues": {
-              "profilePhotoType": "emoji",
-              "icon_emoji": "chart_with_upwards_trend"
-            }
-          }
-        }
-      },
       "id": "824e83a2-838d-442e-9202-cb59681865cd",
       "name": "Slack: Weekly Report",
-      "type": "n8n-nodes-base.slack",
-      "typeVersion": 2.2,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [
         2608,
         800
       ],
-      "webhookId": "ade236dd-035e-4a34-88a4-0077abea97ee",
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: 'C08NX15CMEJ', text: $json.text, blocks: $json.blocks, unfurl_links: false }) }}",
+        "options": {}
+      },
       "credentials": {
         "slackApi": {
           "id": "INNGkyGYO6M06N8D",
@@ -845,35 +823,24 @@
       ]
     },
     {
-      "parameters": {
-        "select": "channel",
-        "channelId": {
-          "__rl": true,
-          "value": "C08NX15CMEJ",
-          "mode": "id"
-        },
-        "messageType": "block",
-        "blocksUi": "={{ $json.blocksStr }}",
-        "text": "={{ $json.text }}",
-        "otherOptions": {
-          "includeLinkToWorkflow": false,
-          "botProfile": {
-            "imageValues": {
-              "profilePhotoType": "emoji",
-              "icon_emoji": "chart_with_upwards_trend"
-            }
-          }
-        }
-      },
       "id": "50c41dfc-0753-431a-87d6-8d4cc28c1c5a",
       "name": "Slack: Monthly Report",
-      "type": "n8n-nodes-base.slack",
-      "typeVersion": 2.2,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [
         2608,
         1600
       ],
-      "webhookId": "18fcbc8a-31bf-40f6-acee-05330fd6e339",
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: 'C08NX15CMEJ', text: $json.text, blocks: $json.blocks, unfurl_links: false }) }}",
+        "options": {}
+      },
       "credentials": {
         "slackApi": {
           "id": "INNGkyGYO6M06N8D",
