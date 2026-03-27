@@ -345,7 +345,8 @@
               "icon_emoji": "chart_with_upwards_trend"
             }
           }
-        }
+        },
+        "messageType": "block"
       },
       "credentials": {
         "slackApi": {
@@ -663,7 +664,8 @@
               "icon_emoji": "chart_with_upwards_trend"
             }
           }
-        }
+        },
+        "messageType": "block"
       },
       "credentials": {
         "slackApi": {
@@ -979,7 +981,8 @@
               "icon_emoji": "chart_with_upwards_trend"
             }
           }
-        }
+        },
+        "messageType": "block"
       },
       "credentials": {
         "slackApi": {
