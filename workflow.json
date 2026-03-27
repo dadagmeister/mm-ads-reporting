@@ -2,22 +2,52 @@
   "name": "MM Paid Monitoring",
   "nodes": [
     {
-      "id": "4b115026-c662-4e79-9e47-d3c60b845a79",
-      "name": "NOTE: Daily Data Source",
+      "id": "53122556-cfe7-4be1-8ad0-c5c9c5a927a4",
+      "name": "NOTE: Daily Setup",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -160,
-        -200
+        -200,
+        -60
       ],
       "parameters": {
-        "content": "## \u2699\ufe0f Daily Path Setup\nThe two Google Ads nodes below pull **yesterday** and **last 7 days** of campaign data directly from the Google Ads API.\n\n**You must configure:**\n1. Open each node and set your **MM Google Ads Customer ID**\n2. Ensure your **Google Ads OAuth credential** is selected\n\nThe nodes use `dateRange: YESTERDAY` and `dateRange: LAST_7_DAYS`.",
-        "height": 180,
+        "content": "## \u2699\ufe0f Daily Path Setup\n\n**Open `MM Get yesterday` and `MM Get day_before_yesterday`** and select the correct sheet tabs from the dropdown.\n\nAlso: **select your Anthropic Claude credential** on the 3 model nodes.",
+        "height": 140,
         "width": 360
       }
     },
     {
-      "id": "f2cde7f9-e6c9-4517-82fa-b6de0266d51b",
+      "id": "c0aba508-638a-4cdc-aa1b-ebadc94d1516",
+      "name": "NOTE: Weekly Path",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        740
+      ],
+      "parameters": {
+        "content": "## \ud83d\udcc5 Weekly Path\nRuns every **Tuesday at 10 AM**.\nReads `last_week` + `prev_week` + MM budget.",
+        "height": 100,
+        "width": 280
+      }
+    },
+    {
+      "id": "90b2e0e8-5f43-4b46-ac7f-e63cc0db48a1",
+      "name": "NOTE: Monthly Path",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        1540
+      ],
+      "parameters": {
+        "content": "## \ud83d\udcc6 Monthly Path\nRuns on **1st of month at 10 AM**.\nReads `last_month` + `prev_month` + MM budget.",
+        "height": 100,
+        "width": 280
+      }
+    },
+    {
+      "id": "88160cef-85e1-4c5a-bf03-d9de7d1568c8",
       "name": "Daily Trigger (Mon\u2013Fri 9 AM)",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
@@ -44,227 +74,75 @@
       }
     },
     {
-      "id": "2981cc52-b9cb-4996-89dc-1bf680e43738",
-      "name": "Get MM Campaigns \u2013 Yesterday",
-      "type": "n8n-nodes-base.googleAds",
-      "typeVersion": 1,
+      "id": "b01b78cd-3948-46c6-a131-96b49776e110",
+      "name": "MM Get yesterday",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
       "position": [
-        240,
-        -120
+        260,
+        -160
       ],
       "parameters": {
-        "additionalOptions": {
-          "dateRange": "YESTERDAY"
-        },
-        "requestOptions": {}
-      }
-    },
-    {
-      "id": "d8f0634b-2fa7-4dd3-8172-41d9b34c9673",
-      "name": "Get MM Campaigns \u2013 Last 7 Days",
-      "type": "n8n-nodes-base.googleAds",
-      "typeVersion": 1,
-      "position": [
-        240,
-        120
-      ],
-      "parameters": {
-        "additionalOptions": {
-          "dateRange": "LAST_7_DAYS"
-        },
-        "requestOptions": {}
-      }
-    },
-    {
-      "id": "3905312d-334e-49ec-b3c0-54153de56bfe",
-      "name": "Compile: Yesterday",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        480,
-        -120
-      ],
-      "parameters": {
-        "jsCode": "/***********************************************\n * Compile Yesterday - MM Daily Monitoring\n * Input: raw campaign rows from Google Ads node\n * Output: { period:'yesterday', totals, by_channel, campaigns }\n ***********************************************/\nconst PERIOD = 'yesterday';\nconst rows = $input.all().map(i => i.json || {});\n\nfunction toNum(v) {\n  if (v == null) return 0;\n  let s = String(v).replace(/[\\u00A0\u20ac\\s,]/g, '').trim();\n  if (!s || s === '-') return 0;\n  const n = parseFloat(s);\n  return Number.isFinite(n) ? n : 0;\n}\nfunction normChannel(v) {\n  const s = String(v || '').toUpperCase().replace(/[_\\-\\s]/g, ' ').trim();\n  if (s.includes('SEARCH')) return 'SEARCH';\n  if (s.includes('PERFORMANCE') || s.includes('PMAX') || s.includes('MAX')) return 'PERFORMANCE MAX';\n  if (s.includes('DEMAND') || s.includes('DISCOVERY')) return 'DEMAND GEN';\n  if (s.includes('DISPLAY')) return 'DISPLAY';\n  if (s.includes('VIDEO')) return 'VIDEO';\n  return s || 'OTHER';\n}\nconst safeDiv = (n, d) => (d && Number.isFinite(n) && Number.isFinite(d)) ? n / d : 0;\n\n// Aggregate by campaign\nconst byId = {};\nfor (const r of rows) {\n  const id   = String(r['campaign.id']   || r.id   || r.campaign_id   || '').trim();\n  const name = String(r['campaign.name'] || r.name || r.campaign_name || '').trim();\n  const channel = normChannel(\n    r['campaign.advertisingChannelType'] ||\n    r['campaign.advertising_channel_type'] ||\n    r.channel || r.campaign_type || ''\n  );\n  if (!id && !name) continue;\n  const key = id || name;\n  if (!byId[key]) byId[key] = { id, name, channel, imp:0, clk:0, cost:0, conv:0, val:0 };\n\n  const imp  = toNum(r['metrics.impressions']  || r.imp  || r.impressions || 0);\n  const clk  = toNum(r['metrics.clicks']       || r.clk  || r.clicks     || 0);\n  const rawCost = toNum(r['metrics.costMicros'] || r['metrics.cost_micros'] || r.cost || r.spend || 0);\n  const cost = rawCost > 10000 ? rawCost / 1e6 : rawCost; // micros \u2192 euros\n  const conv = toNum(r['metrics.conversions']  || r.conv || r.conversions || 0);\n  const rawVal = toNum(r['metrics.conversionsValue'] || r['metrics.conversions_value'] || r.val || r.conversion_value || 0);\n  const val  = rawVal > 10000 ? rawVal / 1e6 : rawVal;\n\n  byId[key].imp  += imp;\n  byId[key].clk  += clk;\n  byId[key].cost += cost;\n  byId[key].conv += conv;\n  byId[key].val  += val;\n}\n\nconst campaigns = Object.values(byId).map(c => ({\n  ...c,\n  ctr:  safeDiv(c.clk,  c.imp),\n  cpc:  safeDiv(c.cost, c.clk),\n  cvr:  safeDiv(c.conv, c.clk),\n  roas: safeDiv(c.val,  c.cost),\n}));\n\nconst totals = { imp:0, clk:0, cost:0, conv:0, val:0 };\nfor (const c of campaigns) {\n  totals.imp  += c.imp;\n  totals.clk  += c.clk;\n  totals.cost += c.cost;\n  totals.conv += c.conv;\n  totals.val  += c.val;\n}\ntotals.ctr  = safeDiv(totals.clk,  totals.imp);\ntotals.cpc  = safeDiv(totals.cost, totals.clk);\ntotals.cvr  = safeDiv(totals.conv, totals.clk);\ntotals.roas = safeDiv(totals.val,  totals.cost);\n\nconst byChannel = {};\nfor (const c of campaigns) {\n  const ch = c.channel || 'OTHER';\n  if (!byChannel[ch]) byChannel[ch] = { imp:0, clk:0, cost:0, conv:0, val:0 };\n  byChannel[ch].imp  += c.imp;\n  byChannel[ch].clk  += c.clk;\n  byChannel[ch].cost += c.cost;\n  byChannel[ch].conv += c.conv;\n  byChannel[ch].val  += c.val;\n}\nfor (const b of Object.values(byChannel)) {\n  b.ctr  = safeDiv(b.clk,  b.imp);\n  b.cpc  = safeDiv(b.cost, b.clk);\n  b.roas = safeDiv(b.val,  b.cost);\n}\n\nreturn [{ json: { period: PERIOD, totals, by_channel: byChannel, campaigns } }];",
-        "mode": "runOnceForAllItems"
-      }
-    },
-    {
-      "id": "34cfb36a-c5e1-45a3-9222-ce1ae61bfeaf",
-      "name": "Compile: 7-day Avg",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        480,
-        120
-      ],
-      "parameters": {
-        "jsCode": "/***********************************************\n * Compile 7-day Average - MM Daily Monitoring\n * Aggregates last-7-days data and computes\n * rolling averages used as anomaly baseline.\n ***********************************************/\nconst PERIOD = 'last_7_days';\nconst rows = $input.all().map(i => i.json || {});\n\nfunction toNum(v) {\n  if (v == null) return 0;\n  let s = String(v).replace(/[\\u00A0\u20ac\\s,]/g, '').trim();\n  if (!s || s === '-') return 0;\n  const n = parseFloat(s);\n  return Number.isFinite(n) ? n : 0;\n}\nfunction normChannel(v) {\n  const s = String(v || '').toUpperCase().replace(/[_\\-\\s]/g, ' ').trim();\n  if (s.includes('SEARCH')) return 'SEARCH';\n  if (s.includes('PERFORMANCE') || s.includes('PMAX') || s.includes('MAX')) return 'PERFORMANCE MAX';\n  if (s.includes('DEMAND') || s.includes('DISCOVERY')) return 'DEMAND GEN';\n  return s || 'OTHER';\n}\nconst safeDiv = (n, d) => (d && Number.isFinite(n) && Number.isFinite(d)) ? n / d : 0;\n\nconst byId = {};\nfor (const r of rows) {\n  const id   = String(r['campaign.id']   || r.id   || r.campaign_id   || '').trim();\n  const name = String(r['campaign.name'] || r.name || r.campaign_name || '').trim();\n  const channel = normChannel(\n    r['campaign.advertisingChannelType'] ||\n    r['campaign.advertising_channel_type'] ||\n    r.channel || r.campaign_type || ''\n  );\n  if (!id && !name) continue;\n  const key = id || name;\n  if (!byId[key]) byId[key] = { id, name, channel, imp:0, clk:0, cost:0, conv:0, val:0 };\n\n  const imp  = toNum(r['metrics.impressions']  || r.imp  || r.impressions || 0);\n  const clk  = toNum(r['metrics.clicks']       || r.clk  || r.clicks     || 0);\n  const rawCost = toNum(r['metrics.costMicros'] || r['metrics.cost_micros'] || r.cost || r.spend || 0);\n  const cost = rawCost > 10000 ? rawCost / 1e6 : rawCost;\n  const conv = toNum(r['metrics.conversions']  || r.conv || r.conversions || 0);\n  const rawVal = toNum(r['metrics.conversionsValue'] || r['metrics.conversions_value'] || r.val || r.conversion_value || 0);\n  const val  = rawVal > 10000 ? rawVal / 1e6 : rawVal;\n\n  byId[key].imp  += imp;\n  byId[key].clk  += clk;\n  byId[key].cost += cost;\n  byId[key].conv += conv;\n  byId[key].val  += val;\n}\n\nconst DAYS = 7;\nconst campaigns = Object.values(byId).map(c => ({\n  ...c,\n  // Rolling averages: CPC and CTR are ratio-based (same calculation)\n  ctr:  safeDiv(c.clk,  c.imp),\n  cpc:  safeDiv(c.cost, c.clk),\n  cvr:  safeDiv(c.conv, c.clk),\n  roas: safeDiv(c.val,  c.cost),\n  // Daily averages (used for spend pacing)\n  daily_cost: c.cost / DAYS,\n  daily_clk:  c.clk  / DAYS,\n  daily_conv: c.conv / DAYS,\n}));\n\nconst totals = { imp:0, clk:0, cost:0, conv:0, val:0 };\nfor (const c of campaigns) {\n  totals.imp  += c.imp;\n  totals.clk  += c.clk;\n  totals.cost += c.cost;\n  totals.conv += c.conv;\n  totals.val  += c.val;\n}\ntotals.ctr         = safeDiv(totals.clk,  totals.imp);\ntotals.cpc         = safeDiv(totals.cost, totals.clk);\ntotals.roas        = safeDiv(totals.val,  totals.cost);\ntotals.daily_cost  = totals.cost / DAYS;\ntotals.daily_clk   = totals.clk  / DAYS;\ntotals.daily_conv  = totals.conv / DAYS;\n\nconst byChannel = {};\nfor (const c of campaigns) {\n  const ch = c.channel || 'OTHER';\n  if (!byChannel[ch]) byChannel[ch] = { imp:0, clk:0, cost:0, conv:0, val:0 };\n  byChannel[ch].imp  += c.imp;\n  byChannel[ch].clk  += c.clk;\n  byChannel[ch].cost += c.cost;\n  byChannel[ch].conv += c.conv;\n  byChannel[ch].val  += c.val;\n}\nfor (const b of Object.values(byChannel)) {\n  b.ctr  = safeDiv(b.clk,  b.imp);\n  b.cpc  = safeDiv(b.cost, b.clk);\n  b.roas = safeDiv(b.val,  b.cost);\n}\n\nreturn [{ json: { period: PERIOD, totals, by_channel: byChannel, campaigns } }];",
-        "mode": "runOnceForAllItems"
-      }
-    },
-    {
-      "id": "c2d35330-5622-422b-a148-5a29f77ea68b",
-      "name": "Merge: Daily + 7d Avg",
-      "type": "n8n-nodes-base.merge",
-      "typeVersion": 3,
-      "position": [
-        720,
-        0
-      ],
-      "parameters": {
-        "mode": "append"
-      }
-    },
-    {
-      "id": "9312003b-8ca1-4510-9bf0-36afa52f372e",
-      "name": "Detect Anomalies",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        960,
-        0
-      ],
-      "parameters": {
-        "jsCode": "/***********************************************\n * Detect Anomalies + Prep Daily Payload\n * Thresholds: CPC up >25%, CTR down >20%\n * Also flags per-campaign anomalies (\u2265\u20ac20 spend)\n ***********************************************/\nconst items = $input.all().map(i => i.json);\nconst yesterday = items.find(i => i.period === 'yesterday');\nconst avg7d     = items.find(i => i.period === 'last_7_days');\n\nif (!yesterday || !avg7d) {\n  throw new Error(`Missing data \u2014 got periods: ${items.map(i=>i.period).join(', ')}`);\n}\n\nconst safeDiv = (n, d) => (d && Number.isFinite(n) && Number.isFinite(d)) ? n / d : 0;\nconst pctChange = (current, baseline) =>\n  (baseline > 0) ? (current - baseline) / baseline : null;\n\nconst CPC_SPIKE   = 0.25;   // +25%\nconst CTR_DROP    = -0.20;  // -20%\nconst ROAS_DROP   = -0.30;  // -30%\nconst MIN_SPEND   = 20;     // min \u20ac20 spend to flag per-campaign\nconst anomalies   = [];\n\n// \u2500\u2500 Overall CPC \u2500\u2500\nconst cpcDelta = pctChange(yesterday.totals.cpc, avg7d.totals.cpc);\nif (cpcDelta !== null && cpcDelta > CPC_SPIKE) {\n  anomalies.push({\n    type: 'CPC_HIGH', severity: cpcDelta > 0.5 ? 'critical' : 'warning',\n    scope: 'overall', metric: 'CPC',\n    yesterday: yesterday.totals.cpc, baseline: avg7d.totals.cpc,\n    change_pct: cpcDelta,\n    message: `Overall CPC up ${(cpcDelta*100).toFixed(1)}% vs 7-day avg (\u20ac${yesterday.totals.cpc.toFixed(2)} vs \u20ac${avg7d.totals.cpc.toFixed(2)})`,\n  });\n}\n\n// \u2500\u2500 Overall CTR \u2500\u2500\nconst ctrDelta = pctChange(yesterday.totals.ctr, avg7d.totals.ctr);\nif (ctrDelta !== null && ctrDelta < CTR_DROP) {\n  anomalies.push({\n    type: 'CTR_LOW', severity: ctrDelta < -0.40 ? 'critical' : 'warning',\n    scope: 'overall', metric: 'CTR',\n    yesterday: yesterday.totals.ctr, baseline: avg7d.totals.ctr,\n    change_pct: ctrDelta,\n    message: `Overall CTR down ${(Math.abs(ctrDelta)*100).toFixed(1)}% vs 7-day avg`,\n  });\n}\n\n// \u2500\u2500 Overall ROAS \u2500\u2500\nconst roasDelta = pctChange(yesterday.totals.roas, avg7d.totals.roas);\nif (roasDelta !== null && roasDelta < ROAS_DROP && yesterday.totals.conv > 0) {\n  anomalies.push({\n    type: 'ROAS_DROP', severity: roasDelta < -0.50 ? 'critical' : 'warning',\n    scope: 'overall', metric: 'ROAS',\n    yesterday: yesterday.totals.roas, baseline: avg7d.totals.roas,\n    change_pct: roasDelta,\n    message: `Overall campaign efficiency down ${(Math.abs(roasDelta)*100).toFixed(1)}% vs 7-day avg`,\n  });\n}\n\n// \u2500\u2500 Per-campaign anomalies \u2500\u2500\nfor (const camp of yesterday.campaigns || []) {\n  if (camp.cost < MIN_SPEND) continue;\n  const camp7d = (avg7d.campaigns || []).find(c =>\n    (c.id && c.id === camp.id) || (c.name && c.name === camp.name)\n  );\n  if (!camp7d) continue;\n\n  const campCpcDelta = pctChange(camp.cpc, camp7d.cpc);\n  const campCtrDelta = pctChange(camp.ctr, camp7d.ctr);\n\n  if (campCpcDelta !== null && campCpcDelta > CPC_SPIKE) {\n    anomalies.push({\n      type: 'CAMPAIGN_CPC_HIGH', severity: 'warning',\n      scope: 'campaign', campaign: camp.name, metric: 'CPC',\n      change_pct: campCpcDelta,\n      message: `\"${camp.name}\": CPC up ${(campCpcDelta*100).toFixed(1)}% (\u20ac${camp.cpc.toFixed(2)} vs \u20ac${camp7d.cpc.toFixed(2)})`,\n    });\n  }\n  if (campCtrDelta !== null && campCtrDelta < CTR_DROP) {\n    anomalies.push({\n      type: 'CAMPAIGN_CTR_LOW', severity: 'warning',\n      scope: 'campaign', campaign: camp.name, metric: 'CTR',\n      change_pct: campCtrDelta,\n      message: `\"${camp.name}\": CTR down ${(Math.abs(campCtrDelta)*100).toFixed(1)}%`,\n    });\n  }\n}\n\n// \u2500\u2500 Spend pacing \u2500\u2500\nif (yesterday.totals.cost > avg7d.totals.daily_cost * 1.5) {\n  anomalies.push({\n    type: 'SPEND_SPIKE', severity: 'warning',\n    scope: 'overall', metric: 'Spend',\n    yesterday: yesterday.totals.cost, baseline: avg7d.totals.daily_cost,\n    change_pct: pctChange(yesterday.totals.cost, avg7d.totals.daily_cost),\n    message: `Daily spend \u20ac${yesterday.totals.cost.toFixed(2)} is ${((yesterday.totals.cost/avg7d.totals.daily_cost - 1)*100).toFixed(0)}% above 7-day daily avg`,\n  });\n}\n\nconst date = new Date();\ndate.setDate(date.getDate() - 1);\nconst dateStr = date.toISOString().split('T')[0];\n\nreturn [{\n  json: {\n    brand: 'MM',\n    date: dateStr,\n    yesterday,\n    rolling_7d: avg7d,\n    anomalies,\n    has_anomalies: anomalies.length > 0,\n    has_critical: anomalies.some(a => a.severity === 'critical'),\n    anomaly_count: anomalies.length,\n  }\n}];",
-        "mode": "runOnceForAllItems"
-      }
-    },
-    {
-      "id": "ccd387d0-376c-471b-886f-1ea476b6dcf4",
-      "name": "Daily AI Agent",
-      "type": "@n8n/n8n-nodes-langchain.agent",
-      "typeVersion": 1.7,
-      "position": [
-        1200,
-        0
-      ],
-      "parameters": {
-        "promptType": "define",
-        "text": "={{ JSON.stringify($json) }}",
-        "options": {
-          "systemMessage": "You are the Paid Performance Analyst for MindMeister (MM), responsible for daily Google Ads monitoring.\n\nYour task: Analyse the daily performance data and produce a concise Slack alert.\n\nINPUT\nYou receive a JSON object with:\n\u2022 date \u2014 the reporting date (yesterday)\n\u2022 yesterday \u2014 { totals, by_channel, campaigns } for yesterday\n\u2022 rolling_7d \u2014 { totals, by_channel, campaigns } averaged over last 7 days\n\u2022 anomalies \u2014 array of detected anomalies with type, severity, message, change_pct\n\u2022 has_anomalies \u2014 boolean\n\u2022 has_critical \u2014 boolean\n\nOUTPUT RULES\n\u2022 Output only the Slack message \u2014 no code blocks, no backticks, no commentary.\n\u2022 Use Slack Markdown: *bold*, _italic_, \u2022 bullets.\n\u2022 Keep to 100\u2013160 words.\n\u2022 Format money as \u20ac1,234 (use thousand separators). Round percentages to whole numbers.\n\u2022 Always use \"campaign efficiency\" instead of \"ROAS\".\n\nSTRUCTURE\n*MindMeister Daily Paid Update \u2013 {date}*\n\n*\ud83d\udcca Yesterday at a glance*\n\u2022 Spend: \u20acX | Clicks: X | Conversions: X | Campaign efficiency: X.XX\n\u2022 vs 7-day avg: Spend \u00b1X%, CPC \u00b1X%, CTR \u00b1X%\n\n{If anomalies: include a clearly labelled section}\n*\u26a0\ufe0f Anomalies detected ({count})* \u2014 or *\ud83d\udea8 Critical alert* if severity=critical\n\u2022 [one line per anomaly from anomalies[].message]\n\n*\ud83d\udca1 Quick take*\n\u2022 1\u20132 sentence AI observation on what's driving today's numbers and one concrete action."
-        }
-      }
-    },
-    {
-      "id": "953b18c9-5d87-47fd-bb4c-cc854f45827c",
-      "name": "Daily: OpenAI Model",
-      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
-      "typeVersion": 1.2,
-      "position": [
-        1200,
-        200
-      ],
-      "parameters": {
-        "model": {
+        "documentId": {
           "__rl": true,
-          "value": "gpt-4o",
+          "value": "1Uag5Qd7elO6R6S1VLXvWIATfK9MHHbNkr-sNM1BOaX0",
           "mode": "list",
-          "cachedResultName": "gpt-4o"
+          "cachedResultName": "MM Paid campaign overview"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "\u2699\ufe0f Set to: yesterday"
         },
         "options": {}
       },
       "credentials": {
-        "openAiApi": {
-          "id": "qPj561bgQG6keBZ9",
-          "name": "Daan Open AI key"
+        "googleSheetsOAuth2Api": {
+          "id": "pxaxsciwgNqJ1ioN",
+          "name": "Daan - Google sheet connection"
         }
       }
     },
     {
-      "id": "84acc5da-48c0-4092-9aef-e7093c5e4a81",
-      "name": "Daily: Memory",
-      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
-      "typeVersion": 1.3,
-      "position": [
-        1200,
-        380
-      ],
-      "parameters": {
-        "contextWindowLength": 10
-      }
-    },
-    {
-      "id": "a109a8ae-1a44-4d67-a666-bcb99cd177b0",
-      "name": "Slack: Daily Alert",
-      "type": "n8n-nodes-base.slack",
-      "typeVersion": 2.2,
-      "position": [
-        1440,
-        0
-      ],
-      "parameters": {
-        "select": "channel",
-        "channelId": {
-          "__rl": true,
-          "value": "C08NX15CMEJ",
-          "mode": "id"
-        },
-        "text": "={{ $json.output }}",
-        "otherOptions": {
-          "includeLinkToWorkflow": false,
-          "botProfile": {
-            "imageValues": {
-              "profilePhotoType": "emoji",
-              "icon_emoji": "chart_with_upwards_trend"
-            }
-          }
-        }
-      },
-      "credentials": {
-        "slackApi": {
-          "id": "INNGkyGYO6M06N8D",
-          "name": "Campaign - Bot connection (Daan)"
-        }
-      }
-    },
-    {
-      "id": "f256d5c0-68d2-47b6-88ec-f9827f29a8b2",
-      "name": "NOTE: Weekly Path",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
-      "position": [
-        -160,
-        500
-      ],
-      "parameters": {
-        "content": "## \ud83d\udcc5 Weekly Path\nRuns every **Tuesday at 10 AM**.\nReads from the `last_week` and `prev_week` tabs of your MM Google Sheet.\n\nTriggers WoW comparison + AI summary \u2192 Slack.",
-        "height": 120,
-        "width": 280
-      }
-    },
-    {
-      "id": "88035c8f-b9e4-443a-87eb-771c819a5a38",
-      "name": "Weekly Trigger (Tue 10 AM)",
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.2,
-      "position": [
-        0,
-        700
-      ],
-      "parameters": {
-        "rule": {
-          "interval": [
-            {
-              "field": "weeks",
-              "triggerAtDay": [
-                2
-              ],
-              "triggerAtHour": 10
-            }
-          ]
-        }
-      }
-    },
-    {
-      "id": "21af2d13-7ae8-4b69-ac62-560277b68d52",
-      "name": "MM Get last_week",
+      "id": "1250f50a-ebf4-46ee-bef3-41074b84514c",
+      "name": "MM Get day_before_yesterday",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [
-        240,
-        580
+        260,
+        0
+      ],
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1Uag5Qd7elO6R6S1VLXvWIATfK9MHHbNkr-sNM1BOaX0",
+          "mode": "list",
+          "cachedResultName": "MM Paid campaign overview"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "\u2699\ufe0f Set to: day_before_yesterday"
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "pxaxsciwgNqJ1ioN",
+          "name": "Daan - Google sheet connection"
+        }
+      }
+    },
+    {
+      "id": "e2c6919d-ce23-4251-a895-fbde0802215a",
+      "name": "MM Get last_week (baseline)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        260,
+        160
       ],
       "parameters": {
         "documentId": {
@@ -289,13 +167,255 @@
       }
     },
     {
-      "id": "376c3d87-722b-4d69-8b14-50d7cffb8115",
+      "id": "c9b9a121-dd42-4aba-9c0b-567726ddd503",
+      "name": "Compile: yesterday",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        -160
+      ],
+      "parameters": {
+        "jsCode": "/***\n * Compile Period: yesterday\n ***/\nconst PERIOD = 'yesterday';\nconst rows = $input.all().map(i => i.json || {});\n\nfunction toNum(v) {\n  if (v == null || v === '') return 0;\n  const n = Number(String(v).replace(/,/g,'.').replace(/[^0-9.\\-]/g,''));\n  return Number.isFinite(n) ? n : 0;\n}\nfunction normChannel(v) {\n  const s = String(v || '').toUpperCase().replace(/[_\\s]/g,' ').trim();\n  if (s.includes('SEARCH')) return 'SEARCH';\n  if (s.includes('PERFORMANCE') || s.includes('PMAX') || s.includes('MAX')) return 'PERFORMANCE MAX';\n  return s || 'OTHER';\n}\nconst safeDiv = (n, d) => (d && Number.isFinite(n) && Number.isFinite(d)) ? n/d : 0;\n\nfunction compileRows(rows) {\n  const byId = {};\n  for (const r of rows) {\n    const id   = String(r.campaign_id   || '').trim();\n    const name = String(r.campaign_name || '').trim();\n    const ch   = normChannel(r.channel  || '');\n    if (!id && !name) continue;\n    const key = id || name;\n    if (!byId[key]) byId[key] = {id, name, channel:ch, imp:0, clk:0, spend:0, conv:0, value:0};\n    byId[key].imp   += toNum(r.impressions);\n    byId[key].clk   += toNum(r.clicks);\n    byId[key].spend += toNum(r.cost);\n    byId[key].conv  += toNum(r.conversions);\n    byId[key].value += toNum(r.conv_value);\n  }\n  const campaigns = Object.values(byId).map(c => ({\n    ...c,\n    ctr:  safeDiv(c.clk,   c.imp),\n    cpc:  safeDiv(c.spend, c.clk),\n    cvr:  safeDiv(c.conv,  c.clk),\n    roas: safeDiv(c.value, c.spend),\n  }));\n  const totals = {imp:0, clicks:0, spend:0, conv:0, value:0};\n  for (const c of campaigns) {\n    totals.imp    += c.imp;\n    totals.clicks += c.clk;\n    totals.spend  += c.spend;\n    totals.conv   += c.conv;\n    totals.value  += c.value;\n  }\n  totals.ctr  = safeDiv(totals.clicks, totals.imp);\n  totals.cpc  = safeDiv(totals.spend,  totals.clicks);\n  totals.cvr  = safeDiv(totals.conv,   totals.clicks);\n  totals.roas = safeDiv(totals.value,  totals.spend);\n  const byChannel = {};\n  for (const c of campaigns) {\n    const ch = c.channel;\n    if (!byChannel[ch]) byChannel[ch] = {imp:0, clicks:0, spend:0, conv:0, value:0};\n    byChannel[ch].imp    += c.imp;\n    byChannel[ch].clicks += c.clk;\n    byChannel[ch].spend  += c.spend;\n    byChannel[ch].conv   += c.conv;\n    byChannel[ch].value  += c.value;\n  }\n  for (const b of Object.values(byChannel)) {\n    b.ctr  = safeDiv(b.clicks, b.imp);\n    b.cpc  = safeDiv(b.spend,  b.clicks);\n    b.roas = safeDiv(b.value,  b.spend);\n  }\n  const ranked = campaigns.filter(c => c.spend >= 10).sort((a,b) => b.roas - a.roas);\n  return { totals, by_channel: byChannel, campaigns,\n           top3_labels: ranked.slice(0,3).map(c=>c.name),\n           bottom3_labels: ranked.slice(-3).map(c=>c.name).reverse() };\n}\n\nconst result = compileRows(rows);\nreturn [{ json: { period: PERIOD, brand: 'MM', ...result } }];",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "c7c6f517-9750-41fa-9156-ed0940b37c85",
+      "name": "Compile: day_before_yesterday",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ],
+      "parameters": {
+        "jsCode": "/***\n * Compile Period: day_before_yesterday\n ***/\nconst PERIOD = 'day_before_yesterday';\nconst rows = $input.all().map(i => i.json || {});\n\nfunction toNum(v) {\n  if (v == null || v === '') return 0;\n  const n = Number(String(v).replace(/,/g,'.').replace(/[^0-9.\\-]/g,''));\n  return Number.isFinite(n) ? n : 0;\n}\nfunction normChannel(v) {\n  const s = String(v || '').toUpperCase().replace(/[_\\s]/g,' ').trim();\n  if (s.includes('SEARCH')) return 'SEARCH';\n  if (s.includes('PERFORMANCE') || s.includes('PMAX') || s.includes('MAX')) return 'PERFORMANCE MAX';\n  return s || 'OTHER';\n}\nconst safeDiv = (n, d) => (d && Number.isFinite(n) && Number.isFinite(d)) ? n/d : 0;\n\nfunction compileRows(rows) {\n  const byId = {};\n  for (const r of rows) {\n    const id   = String(r.campaign_id   || '').trim();\n    const name = String(r.campaign_name || '').trim();\n    const ch   = normChannel(r.channel  || '');\n    if (!id && !name) continue;\n    const key = id || name;\n    if (!byId[key]) byId[key] = {id, name, channel:ch, imp:0, clk:0, spend:0, conv:0, value:0};\n    byId[key].imp   += toNum(r.impressions);\n    byId[key].clk   += toNum(r.clicks);\n    byId[key].spend += toNum(r.cost);\n    byId[key].conv  += toNum(r.conversions);\n    byId[key].value += toNum(r.conv_value);\n  }\n  const campaigns = Object.values(byId).map(c => ({\n    ...c,\n    ctr:  safeDiv(c.clk,   c.imp),\n    cpc:  safeDiv(c.spend, c.clk),\n    cvr:  safeDiv(c.conv,  c.clk),\n    roas: safeDiv(c.value, c.spend),\n  }));\n  const totals = {imp:0, clicks:0, spend:0, conv:0, value:0};\n  for (const c of campaigns) {\n    totals.imp    += c.imp;\n    totals.clicks += c.clk;\n    totals.spend  += c.spend;\n    totals.conv   += c.conv;\n    totals.value  += c.value;\n  }\n  totals.ctr  = safeDiv(totals.clicks, totals.imp);\n  totals.cpc  = safeDiv(totals.spend,  totals.clicks);\n  totals.cvr  = safeDiv(totals.conv,   totals.clicks);\n  totals.roas = safeDiv(totals.value,  totals.spend);\n  const byChannel = {};\n  for (const c of campaigns) {\n    const ch = c.channel;\n    if (!byChannel[ch]) byChannel[ch] = {imp:0, clicks:0, spend:0, conv:0, value:0};\n    byChannel[ch].imp    += c.imp;\n    byChannel[ch].clicks += c.clk;\n    byChannel[ch].spend  += c.spend;\n    byChannel[ch].conv   += c.conv;\n    byChannel[ch].value  += c.value;\n  }\n  for (const b of Object.values(byChannel)) {\n    b.ctr  = safeDiv(b.clicks, b.imp);\n    b.cpc  = safeDiv(b.spend,  b.clicks);\n    b.roas = safeDiv(b.value,  b.spend);\n  }\n  const ranked = campaigns.filter(c => c.spend >= 10).sort((a,b) => b.roas - a.roas);\n  return { totals, by_channel: byChannel, campaigns,\n           top3_labels: ranked.slice(0,3).map(c=>c.name),\n           bottom3_labels: ranked.slice(-3).map(c=>c.name).reverse() };\n}\n\nconst result = compileRows(rows);\nreturn [{ json: { period: PERIOD, brand: 'MM', ...result } }];",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "9e9d9d7d-64c4-4e37-a2c5-d8eacb72f816",
+      "name": "Compile: 7-day baseline",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        160
+      ],
+      "parameters": {
+        "jsCode": "/***\n * Compile 7-day Rolling Average (from last_week sheet)\n * Computes ratio-based metrics (CPC, CTR) as 7-day weighted averages.\n * Also computes daily pacing averages for spend/clicks/conversions.\n ***/\nconst PERIOD = 'last_7_days';\nconst DAYS = 7;\nconst rows = $input.all().map(i => i.json || {});\n\nfunction toNum(v) {\n  if (v == null || v === '') return 0;\n  const n = Number(String(v).replace(/,/g,'.').replace(/[^0-9.\\-]/g,''));\n  return Number.isFinite(n) ? n : 0;\n}\nfunction normChannel(v) {\n  const s = String(v || '').toUpperCase().replace(/[_\\s]/g,' ').trim();\n  if (s.includes('SEARCH')) return 'SEARCH';\n  if (s.includes('PERFORMANCE') || s.includes('PMAX') || s.includes('MAX')) return 'PERFORMANCE MAX';\n  return s || 'OTHER';\n}\nconst safeDiv = (n, d) => (d && Number.isFinite(n) && Number.isFinite(d)) ? n/d : 0;\n\nfunction compileRows(rows) {\n  const byId = {};\n  for (const r of rows) {\n    const id   = String(r.campaign_id   || '').trim();\n    const name = String(r.campaign_name || '').trim();\n    const ch   = normChannel(r.channel  || '');\n    if (!id && !name) continue;\n    const key = id || name;\n    if (!byId[key]) byId[key] = {id, name, channel:ch, imp:0, clk:0, spend:0, conv:0, value:0};\n    byId[key].imp   += toNum(r.impressions);\n    byId[key].clk   += toNum(r.clicks);\n    byId[key].spend += toNum(r.cost);\n    byId[key].conv  += toNum(r.conversions);\n    byId[key].value += toNum(r.conv_value);\n  }\n  const campaigns = Object.values(byId).map(c => ({\n    ...c,\n    ctr:  safeDiv(c.clk,   c.imp),\n    cpc:  safeDiv(c.spend, c.clk),\n    cvr:  safeDiv(c.conv,  c.clk),\n    roas: safeDiv(c.value, c.spend),\n  }));\n  const totals = {imp:0, clicks:0, spend:0, conv:0, value:0};\n  for (const c of campaigns) {\n    totals.imp    += c.imp;\n    totals.clicks += c.clk;\n    totals.spend  += c.spend;\n    totals.conv   += c.conv;\n    totals.value  += c.value;\n  }\n  totals.ctr  = safeDiv(totals.clicks, totals.imp);\n  totals.cpc  = safeDiv(totals.spend,  totals.clicks);\n  totals.cvr  = safeDiv(totals.conv,   totals.clicks);\n  totals.roas = safeDiv(totals.value,  totals.spend);\n  const byChannel = {};\n  for (const c of campaigns) {\n    const ch = c.channel;\n    if (!byChannel[ch]) byChannel[ch] = {imp:0, clicks:0, spend:0, conv:0, value:0};\n    byChannel[ch].imp    += c.imp;\n    byChannel[ch].clicks += c.clk;\n    byChannel[ch].spend  += c.spend;\n    byChannel[ch].conv   += c.conv;\n    byChannel[ch].value  += c.value;\n  }\n  for (const b of Object.values(byChannel)) {\n    b.ctr  = safeDiv(b.clicks, b.imp);\n    b.cpc  = safeDiv(b.spend,  b.clicks);\n    b.roas = safeDiv(b.value,  b.spend);\n  }\n  const ranked = campaigns.filter(c => c.spend >= 10).sort((a,b) => b.roas - a.roas);\n  return { totals, by_channel: byChannel, campaigns,\n           top3_labels: ranked.slice(0,3).map(c=>c.name),\n           bottom3_labels: ranked.slice(-3).map(c=>c.name).reverse() };\n}\n\nconst result = compileRows(rows);\n// Add daily averages (for pacing comparison with yesterday)\nresult.totals.daily_spend  = result.totals.spend  / DAYS;\nresult.totals.daily_clicks = result.totals.clicks / DAYS;\nresult.totals.daily_conv   = result.totals.conv   / DAYS;\nreturn [{ json: { period: PERIOD, brand: 'MM', ...result } }];",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "005ec903-02cb-4058-baae-9860d779d98d",
+      "name": "Merge: Daily Pair",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        780,
+        -80
+      ],
+      "parameters": {
+        "mode": "append"
+      }
+    },
+    {
+      "id": "fe0f8cff-feb5-41de-9160-c7d60f1dc24c",
+      "name": "Merge: All Daily",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1040,
+        0
+      ],
+      "parameters": {
+        "mode": "append"
+      }
+    },
+    {
+      "id": "603bf1e9-8a78-4e8d-a04c-cd536e13c72e",
+      "name": "Detect Anomalies",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        0
+      ],
+      "parameters": {
+        "jsCode": "\n/***\n * Detect Anomalies + Prep Daily Payload\n * Thresholds: CPC +25%, CTR -20% vs 7-day avg.\n * Also checks DoD changes and spend pacing.\n ***/\nconst all = $input.all().map(i => i.json);\nconst yesterday = all.find(i => i.period === 'yesterday');\nconst dod       = all.find(i => i.period === 'day_before_yesterday');\nconst avg7d     = all.find(i => i.period === 'last_7_days');\n\nif (!yesterday) throw new Error('Missing yesterday data. Periods received: ' + all.map(i=>i.period).join(', '));\n\nconst safeDiv = (n,d) => (d && Number.isFinite(n) && Number.isFinite(d)) ? n/d : 0;\nconst pctChange = (cur, base) => (base > 0) ? (cur - base) / base : null;\n\nconst CPC_SPIKE  =  0.25;  // +25%\nconst CTR_DROP   = -0.20;  // -20%\nconst ROAS_DROP  = -0.30;  // -30%\nconst MIN_SPEND  = 20;     // min \u20ac20 spend to check campaign-level\nconst anomalies  = [];\n\nconst y = yesterday.totals;\nconst a = avg7d?.totals || {};\n\n// \u2500\u2500 Overall metrics vs 7-day avg \u2500\u2500\nconst checks = [\n  { key:'cpc',   delta: pctChange(y.cpc,  a.cpc),  threshold: CPC_SPIKE,  direction: 'up',   label:'CPC',   unit:'\u20ac' },\n  { key:'ctr',   delta: pctChange(y.ctr,  a.ctr),  threshold: CTR_DROP,   direction: 'down', label:'CTR',   unit:'%' },\n  { key:'roas',  delta: pctChange(y.roas, a.roas),  threshold: ROAS_DROP,  direction: 'down', label:'Campaign efficiency', unit:'' },\n];\n\nfor (const c of checks) {\n  if (c.delta === null) continue;\n  const triggered = c.direction === 'up' ? c.delta > c.threshold : c.delta < c.threshold;\n  if (!triggered) continue;\n  const severity = Math.abs(c.delta) > Math.abs(c.threshold) * 2 ? 'critical' : 'warning';\n  anomalies.push({\n    type: `${c.key.toUpperCase()}_ANOMALY`, severity, scope: 'overall', metric: c.label,\n    yesterday: y[c.key], baseline: a[c.key], change_pct: c.delta,\n    message: `Overall ${c.label} ${c.direction} ${(Math.abs(c.delta)*100).toFixed(1)}% vs 7-day avg`,\n  });\n}\n\n// \u2500\u2500 Spend pacing vs 7-day daily avg \u2500\u2500\nif (a.daily_spend > 0) {\n  const spendDelta = pctChange(y.spend, a.daily_spend);\n  if (spendDelta > 0.5) {\n    anomalies.push({\n      type: 'SPEND_SPIKE', severity: 'warning', scope: 'overall', metric: 'Spend',\n      yesterday: y.spend, baseline: a.daily_spend, change_pct: spendDelta,\n      message: `Daily spend \u20ac${y.spend.toFixed(0)} is ${(spendDelta*100).toFixed(0)}% above 7-day daily avg`,\n    });\n  }\n}\n\n// \u2500\u2500 Per-campaign vs 7-day avg \u2500\u2500\nfor (const camp of (yesterday.campaigns || [])) {\n  if (camp.spend < MIN_SPEND) continue;\n  const c7d = (avg7d?.campaigns || []).find(c => c.id === camp.id || c.name === camp.name);\n  if (!c7d) continue;\n  const cpc\u0394 = pctChange(camp.cpc,  c7d.cpc);\n  const ctr\u0394 = pctChange(camp.ctr,  c7d.ctr);\n  if (cpc\u0394 !== null && cpc\u0394 > CPC_SPIKE)\n    anomalies.push({ type:'CAMPAIGN_CPC', severity:'warning', scope:'campaign', campaign:camp.name,\n      metric:'CPC', change_pct:cpc\u0394, message:`\"${camp.name}\": CPC +${(cpc\u0394*100).toFixed(1)}%` });\n  if (ctr\u0394 !== null && ctr\u0394 < CTR_DROP)\n    anomalies.push({ type:'CAMPAIGN_CTR', severity:'warning', scope:'campaign', campaign:camp.name,\n      metric:'CTR', change_pct:ctr\u0394, message:`\"${camp.name}\": CTR ${(ctr\u0394*100).toFixed(1)}%` });\n}\n\n// \u2500\u2500 DoD comparison \u2500\u2500\nconst dod_changes = {};\nif (dod) {\n  const d = dod.totals;\n  dod_changes.spend  = pctChange(y.spend,  d.spend);\n  dod_changes.clicks = pctChange(y.clicks, d.clicks);\n  dod_changes.conv   = pctChange(y.conv,   d.conv);\n  dod_changes.cpc    = pctChange(y.cpc,    d.cpc);\n  dod_changes.ctr    = pctChange(y.ctr,    d.ctr);\n  dod_changes.roas   = pctChange(y.roas,   d.roas);\n}\n\nconst date = new Date(); date.setDate(date.getDate() - 1);\nreturn [{ json: {\n  brand: 'MM', date: date.toISOString().split('T')[0],\n  yesterday, dod_baseline: dod || null, rolling_7d: avg7d || null,\n  dod_changes, anomalies,\n  has_anomalies: anomalies.length > 0,\n  has_critical: anomalies.some(a => a.severity === 'critical'),\n  anomaly_count: anomalies.length,\n}}];\n",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "280d00d2-d7e5-4750-9959-85826046c131",
+      "name": "Daily AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        1560,
+        0
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ JSON.stringify($json) }}",
+        "options": {
+          "systemMessage": "You are the Paid Performance Analyst for MindMeister (MM) Google Ads.\n\nYour task: Write a concise daily performance commentary (100\u2013150 words) that will appear in a Slack alert.\n\nINPUT\nYou receive a JSON object with:\n\u2022 date \u2014 reporting date (yesterday)\n\u2022 yesterday.totals \u2014 { spend, clicks, conv, value, ctr, cpc, roas }\n\u2022 yesterday.by_channel \u2014 per-channel breakdowns (SEARCH, PERFORMANCE MAX)\n\u2022 rolling_7d.totals \u2014 7-day rolling averages (same fields + daily_spend)\n\u2022 dod_changes \u2014 day-over-day % changes vs day_before_yesterday\n\u2022 anomalies \u2014 array of detected anomalies with message/severity\n\u2022 has_anomalies, has_critical, anomaly_count\n\nOUTPUT RULES\n\u2022 Plain text only \u2014 no JSON, no backticks, no bullet symbols (those come from the blocks formatter).\n\u2022 Write in a direct, factual tone. 2\u20134 short paragraphs max.\n\u2022 Lead with the key story: if anomalies exist, explain the likely cause and recommended action.\n\u2022 If no anomalies, highlight any notable positive or negative trend vs 7-day avg.\n\u2022 Always reference at least one metric with its value (e.g. \"CPC of \u20ac1.23, up 28%\").\n\u2022 End with one concrete next step.\n\u2022 Never use the word \"ROAS\" \u2014 say \"campaign efficiency\" instead."
+        }
+      }
+    },
+    {
+      "id": "3db22f9f-3a0b-48b5-9893-3858c068bf02",
+      "name": "Daily: Claude Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.1,
+      "position": [
+        1560,
+        200
+      ],
+      "parameters": {
+        "model": "claude-sonnet-4-6",
+        "options": {}
+      }
+    },
+    {
+      "id": "6e0757d9-1499-486a-a7fd-845b6d64e47e",
+      "name": "Daily: Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        1560,
+        380
+      ],
+      "parameters": {
+        "contextWindowLength": 10
+      }
+    },
+    {
+      "id": "7c9da57a-2d85-4574-9f70-f1184c929ee4",
+      "name": "Merge: AI + Daily Data",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1820,
+        0
+      ],
+      "parameters": {
+        "mode": "append"
+      }
+    },
+    {
+      "id": "08b02484-cded-4941-b583-99b9c9eb876e",
+      "name": "Format Daily Blocks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2080,
+        0
+      ],
+      "parameters": {
+        "jsCode": "\n/***\n * Format Daily Slack Blocks\n * Input: merged item with anomaly payload + AI agent output\n ***/\nconst all  = $input.all().map(i => i.json);\nconst data = all.find(i => i.brand === 'MM' && i.date !== undefined) || all[0];\nconst ai   = (all.find(i => i.output !== undefined) || {}).output || '';\n\nconst y   = data.yesterday?.totals   || {};\nconst a   = data.rolling_7d?.totals  || {};\nconst dod = data.dod_changes          || {};\n\nconst fmtEur  = n => `\u20ac${Number(n||0).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})}`;\nconst fmtNum  = n => Number(n||0).toLocaleString('de-DE');\nconst fmtPct  = (n, noSign) => n == null ? 'n/a' : `${n>=0&&!noSign?'+':''}${(n*100).toFixed(1)}%`;\nconst fmtRoas = n => Number(n||0).toFixed(2);\n\nconst statusEmoji = data.has_critical ? '\ud83d\udea8' : data.has_anomalies ? '\u26a0\ufe0f' : '\u2705';\nconst statusLabel = data.has_critical ? 'Critical Alert' : data.has_anomalies ? `${data.anomaly_count} Anomaly` : 'All Clear';\n\nconst blocks = [\n  {\n    type: 'header',\n    text: { type: 'plain_text', text: `${statusEmoji} MM Daily Paid \u2013 ${data.date} \u00b7 ${statusLabel}`, emoji: true }\n  },\n  { type: 'divider' },\n  {\n    type: 'section',\n    text: { type: 'mrkdwn', text: '*Yesterday at a glance*' },\n    fields: [\n      { type: 'mrkdwn', text: `*Spend*\\n${fmtEur(y.spend)}` },\n      { type: 'mrkdwn', text: `*Clicks*\\n${fmtNum(y.clicks)}` },\n      { type: 'mrkdwn', text: `*Conversions*\\n${fmtNum(y.conv)}` },\n      { type: 'mrkdwn', text: `*Efficiency*\\n${fmtRoas(y.roas)}` },\n    ]\n  },\n  {\n    type: 'section',\n    text: { type: 'mrkdwn', text: '*vs 7-day rolling average*' },\n    fields: [\n      { type: 'mrkdwn', text: `*CPC*\\n${fmtEur(y.cpc)} _(${fmtPct(a.cpc>0?(y.cpc-a.cpc)/a.cpc:null)} vs avg ${fmtEur(a.cpc)})_` },\n      { type: 'mrkdwn', text: `*CTR*\\n${fmtPct(y.ctr,true)} _(${fmtPct(a.ctr>0?(y.ctr-a.ctr)/a.ctr:null)} vs avg)_` },\n      { type: 'mrkdwn', text: `*Spend*\\n${fmtEur(y.spend)} _(${fmtPct(a.daily_spend>0?(y.spend-a.daily_spend)/a.daily_spend:null)} vs daily avg)_` },\n      { type: 'mrkdwn', text: `*DoD*\\n${Object.keys(dod).length ? `Spend ${fmtPct(dod.spend)}, CPC ${fmtPct(dod.cpc)}` : 'n/a'}` },\n    ]\n  },\n];\n\n// Channel split\nconst chKeys = Object.keys(data.yesterday?.by_channel || {});\nif (chKeys.length > 0) {\n  const chLines = chKeys.map(ch => {\n    const b = data.yesterday.by_channel[ch];\n    return `\u2022 *${ch}*: ${fmtEur(b.spend)} spend \u00b7 ${fmtNum(b.clicks)} clicks \u00b7 eff. ${fmtRoas(b.roas)}`;\n  }).join('\\n');\n  blocks.push({ type: 'divider' });\n  blocks.push({ type: 'section', text: { type: 'mrkdwn', text: `*Channel breakdown*\\n${chLines}` } });\n}\n\n// Anomalies\nif (data.has_anomalies) {\n  const lines = (data.anomalies||[]).map(a => `${a.severity==='critical'?'\ud83d\udea8':'\u26a0\ufe0f'} ${a.message}`).join('\\n');\n  blocks.push({ type: 'divider' });\n  blocks.push({\n    type: 'section',\n    text: { type: 'mrkdwn', text: `*${data.has_critical?'\ud83d\udea8 Critical alerts':'\u26a0\ufe0f Anomalies detected'} (${data.anomaly_count})*\\n${lines}` }\n  });\n}\n\n// AI commentary\nif (ai) {\n  blocks.push({ type: 'divider' });\n  blocks.push({ type: 'section', text: { type: 'mrkdwn', text: `*\ud83d\udca1 Analysis*\\n${ai.slice(0,3000)}` } });\n}\n\nblocks.push({ type: 'divider' });\nblocks.push({\n  type: 'context',\n  elements: [{ type: 'mrkdwn', text: `_MindMeister Paid \u00b7 Daily Monitor \u00b7 ${new Date().toISOString().split('T')[0]}_` }]\n});\n\nconst fallback = `${statusEmoji} MM Daily Paid \u2013 ${data.date} | Spend: ${fmtEur(y.spend)} | CPC: ${fmtEur(y.cpc)} | Eff: ${fmtRoas(y.roas)}${data.has_anomalies?' | '+statusLabel:''}`;\nreturn [{ json: { blocks, text: fallback } }];\n",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "d28a4bcb-ce52-48f6-b52d-a444fbbd2af6",
+      "name": "Slack: Daily Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        2340,
+        0
+      ],
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C08NX15CMEJ",
+          "mode": "id"
+        },
+        "text": "={{ $json.text }}",
+        "blocksUi": "={{ JSON.stringify($json.blocks) }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false,
+          "botProfile": {
+            "imageValues": {
+              "profilePhotoType": "emoji",
+              "icon_emoji": "chart_with_upwards_trend"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "INNGkyGYO6M06N8D",
+          "name": "Campaign - Bot connection (Daan)"
+        }
+      }
+    },
+    {
+      "id": "54634bb6-dc40-420a-8c67-13e75af5f03a",
+      "name": "Weekly Trigger (Tue 10 AM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        800
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                2
+              ],
+              "triggerAtHour": 10
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "e9afc68a-0ebd-4ef0-a61c-7c075d958630",
+      "name": "MM Get last_week",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        260,
+        640
+      ],
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1Uag5Qd7elO6R6S1VLXvWIATfK9MHHbNkr-sNM1BOaX0",
+          "mode": "list",
+          "cachedResultName": "MM Paid campaign overview"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 553316878,
+          "mode": "list",
+          "cachedResultName": "last_week"
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "pxaxsciwgNqJ1ioN",
+          "name": "Daan - Google sheet connection"
+        }
+      }
+    },
+    {
+      "id": "0a728af7-021f-4188-bb98-ad489a064ef8",
       "name": "MM Get prev_week",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [
-        240,
-        820
+        260,
+        800
       ],
       "parameters": {
         "documentId": {
@@ -320,13 +440,13 @@
       }
     },
     {
-      "id": "8fa59bfd-65cb-4b30-bb2a-470957b04ffb",
+      "id": "3327ea68-1114-4b8c-a3f1-2b1ce84662e1",
       "name": "MM Get Budget (current)",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [
-        240,
-        1040
+        260,
+        960
       ],
       "parameters": {
         "documentId": {
@@ -351,164 +471,180 @@
       }
     },
     {
-      "id": "b4d9c9f4-f92d-490a-9e13-a164903fc4af",
+      "id": "1415448e-2279-419e-9ef1-abbd84deb6d4",
       "name": "Compile: last_week",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        480,
-        580
+        520,
+        640
       ],
       "parameters": {
-        "jsCode": "/******************************************************\n * Google Ads \u2192 Compile Results (Weekly v4.5w)\n * - Same logic as monthly v4.5, adapted for weekly periods\n * - Ignores Date columns (groups all rows by campaign)\n * - Computes ROAS = conv_value / cost\n * - Rounds conversions (display) to \u22642 decimals\n * - Formats Top/Bottom 3 labels cleanly\n ******************************************************/\nconst BRAND  = 'MM';          // \u2190 'MT' or 'MM'\nconst PERIOD = 'last_week';   // \u2190 'last_week' or 'prev_week'\nconst MIN_SPEND_FOR_RANK = 50; // a bit lower for weekly\nconst MIN_NAME_LEN = 2;\nconst DEBUG = false;\n\nconst rows = $input.all().map(i => i.json || {});\nconst up = s => (s ?? '').toString().trim().toUpperCase();\n\n// ---------- helpers ----------\nfunction toNum(v) {\n  if (v === null || v === undefined) return 0;\n  let s = String(v).replace(/\\u00A0/g,' ').replace(/[\u20ac\\s]/g,'').trim();\n  if (!s || s === '-') return 0;\n  const hasDot = s.includes('.'), hasCom = s.includes(',');\n  if (hasDot && hasCom) {\n    // handle \"12.345,67\" vs \"12,345.67\"\n    if (s.lastIndexOf(',') > s.lastIndexOf('.')) s = s.replace(/\\./g,'').replace(',', '.');\n    else s = s.replace(/,/g,'');\n  } else if (hasCom && !hasDot) {\n    const parts = s.split(',');\n    s = (parts[parts.length-1].length <= 2) ? (parts.slice(0,-1).join('') + '.' + parts.at(-1)) : s.replace(/,/g,'');\n  } else s = s.replace(/,/g,'');\n  const n = parseFloat(s);\n  return Number.isFinite(n) ? n : 0;\n}\nfunction toPct(v){\n  if (v === null || v === undefined) return 0;\n  let s = String(v).trim();\n  const pct = s.endsWith('%');\n  s = s.replace('%','');\n  const n = toNum(s);\n  return pct ? n/100 : (n>1 ? n/100 : n);\n}\nfunction normKey(k){ return String(k).toLowerCase().replace(/[\\s\\.\\(\\)\\-_/\\\\]/g,''); }\n\n// format conversions nicely (\u22642 decimals)\nfunction fmtConv(n) {\n  if (!Number.isFinite(n)) return '0';\n  const rounded = Math.round(n);\n  return Math.abs(n - rounded) < 1e-9 ? String(rounded) : n.toFixed(2);\n}\n\n// fuzzy getter (handles 'clk', 'clicks', localized headers, etc.)\nfunction getFuzzy(r, preds) {\n  const entries = Object.keys(r).map(k => ({ k, nk: normKey(k) }));\n  for (const {k,nk} of entries) {\n    for (const p of preds) {\n      if (typeof p === 'function' && p(nk)) return { key:k, value:r[k] };\n      if (p instanceof RegExp && p.test(nk)) return { key:k, value:r[k] };\n    }\n  }\n  return { key:null, value:undefined };\n}\n\n// pickers\nfunction pickCost(r){ return getFuzzy(r,[ nk => nk==='cost' || nk==='spend' || nk.endsWith('costeur') || nk==='kosten' ]); }\nfunction pickClicks(r){ return getFuzzy(r,[ nk => nk.includes('click') || nk==='clk' || nk==='klicks' ]); }\nfunction pickImps(r){ return getFuzzy(r,[ nk => nk.includes('impression') || nk==='imp' || nk==='einblendungen' ]); }\nfunction pickConv(r){ return getFuzzy(r,[ nk => nk.includes('allconv') || (nk.includes('conv') && !nk.includes('value')) || nk==='conversions' ]); }\nfunction pickConvValue(r){ return getFuzzy(r,[ nk => nk==='convvalue' || nk.includes('conversionvalue') || nk.includes('allconvvalue') || nk.includes('conv_value') || nk.includes('revenue') || nk.includes('umsatz') ]); }\nfunction pickROAS(r){ return getFuzzy(r,[ nk => nk==='roas' || nk.includes('returnonadspend') ]); }\nfunction pickValuePerCost(r){ return getFuzzy(r,[ nk => nk.includes('valuepercost') || nk.includes('convvaluepercost') ]); }\n\nconst normalizeChannel = (c) => {\n  const x = up(c);\n  if (x.includes('SEARCH')) return 'SEARCH';\n  if (x.includes('PERFORMANCE') || x.includes('P-MAX') || x.includes('PMAX')) return 'PERFORMANCE MAX';\n  if (x.includes('DEMAND') || x.includes('DISCOVERY') || x.includes('VIDEO') || x.includes('DISPLAY') || x.includes('YOUTUBE'))\n    return 'DEMAND GEN';\n  return x || 'UNKNOWN';\n};\n\n// ---------- main mapping ----------\nfunction mapRow(r){\n  const name =\n    (r.name ?? r.campaign_name ?? r['Campaign'] ?? r['Kampagne'] ?? r['campaign'] ?? r.id ?? '').toString().trim() || `Unknown_${r.id ?? ''}`;\n  const channel = normalizeChannel(r.channel ?? r.campaign_type ?? r['Channel'] ?? r['Netzwerk'] ?? '');\n\n  const costK = pickCost(r), clicksK = pickClicks(r), impsK = pickImps(r);\n  const convK = pickConv(r), valK = pickConvValue(r);\n  const roasK = pickROAS(r), vpcK = pickValuePerCost(r);\n\n  const cost = toNum(costK.value);\n  const clk  = toNum(clicksK.value);\n  const imp  = toNum(impsK.value);\n  const conv = toNum(convK.value);\n  let val    = toNum(valK.value);\n\n  const roasFromCol = toNum(roasK.value);\n  const roasFromVpc = toNum(vpcK.value);\n  if (val === 0 && roasFromCol > 0 && cost > 0) val = roasFromCol * cost;\n  else if (val === 0 && roasFromVpc > 0 && cost > 0) val = roasFromVpc * cost;\n\n  const roas = (cost > 0 && val > 0) ? (val / cost) : 0;\n  const ctr  = imp>0 ? (clk/imp) : toPct(r.ctr ?? r['CTR']);\n  const cpc  = clk>0 ? (cost/clk) : toNum(r.cpc ?? r['CPC']);\n  const cvr  = clk>0 ? (conv/clk) : toPct(r.cvr ?? r['CVR'] ?? r['Conv rate']);\n\n  if (DEBUG) console.log('Mapped', name, { cost, val, conv, roas });\n\n  return { name, channel, imp, clk, cost, conv, val, ctr, cpc, cvr, roas };\n}\n\n// ---------- group by campaign ----------\nconst mapped = rows.map(mapRow).filter(d => d.name && d.name.length >= MIN_NAME_LEN);\nconst grouped = {};\nfor (const r of mapped) {\n  const k = r.name;\n  if (!grouped[k]) grouped[k] = { ...r };\n  else {\n    const g = grouped[k];\n    g.imp += r.imp; g.clk += r.clk; g.cost += r.cost; g.conv += r.conv; g.val += r.val;\n    g.ctr = g.imp>0 ? (g.clk/g.imp) : 0;\n    g.cpc = g.clk>0 ? (g.cost/g.clk) : 0;\n    g.cvr = g.clk>0 ? (g.conv/g.clk) : 0;\n    g.roas = g.cost>0 ? (g.val/g.cost) : 0;\n  }\n}\nconst data = Object.values(grouped);\n\n// ---------- totals ----------\nconst sum = (arr,k)=>arr.reduce((a,r)=>a+(r[k]||0),0);\nconst totals = {\n  spend: sum(data,'cost'),\n  value: sum(data,'val'),\n  conv:  sum(data,'conv'),\n  clicks: sum(data,'clk'),\n  impressions: sum(data,'imp'),\n};\ntotals.roas = totals.spend>0 ? (totals.value/totals.spend) : 0;\n\n// ---------- per-channel ----------\nconst by_channel = {};\nfor (const r of data) {\n  const ch = r.channel || 'UNKNOWN';\n  if (!by_channel[ch]) by_channel[ch] = { spend:0, value:0, conv:0, clicks:0, impressions:0 };\n  const g = by_channel[ch];\n  g.spend += r.cost; g.value += r.val; g.conv += r.conv; g.clicks += r.clk; g.impressions += r.imp;\n}\nfor (const ch of Object.keys(by_channel)) {\n  const g = by_channel[ch];\n  g.roas = g.spend>0 ? (g.value/g.spend) : 0;\n  g.ctr  = g.impressions>0 ? (g.clicks/g.impressions) : 0;\n  g.cpc  = g.clicks>0 ? (g.spend/g.clicks) : 0;\n}\nconst channel_split = {};\nfor (const ch of Object.keys(by_channel)) {\n  channel_split[ch] = totals.spend>0 ? (by_channel[ch].spend/totals.spend) : 0;\n}\n\n// ---------- highs & lows ----------\nconst eligible = data.filter(r => r.cost >= MIN_SPEND_FOR_RANK).sort((a,b)=>b.roas-a.roas);\nfunction toEntry(r){\n  const cvrPct = r.clk>0 ? (r.conv/r.clk)*100 : (r.cvr*100);\n  const ctrPct = r.imp>0 ? (r.clk/r.imp)*100 : (r.ctr*100);\n  return {\n    name:r.name,\n    roas:r.roas,\n    conv:r.conv,\n    conv_display: fmtConv(r.conv),\n    cvr_pct:cvrPct||0,\n    spend:r.cost,\n    clicks:r.clk,\n    ctr_pct:ctrPct||0,\n    cpc:r.cpc\n  };\n}\nconst topRaw = eligible.slice(0,3).map(toEntry);\nconst bottomRaw = eligible.length>=6 ? eligible.slice().sort((a,b)=>a.roas-b.roas).slice(0,3).map(toEntry) : [];\n\n// formatted label\nconst label = e => `${e.name} (ROAS ${e.roas.toFixed(2)}, CVR ${e.cvr_pct.toFixed(2)}%, ${fmtConv(e.conv)} conv)`;\n\nconst highs_lows = {\n  top3_labels: topRaw.map(label),\n  bottom3_labels: bottomRaw.map(label),\n  top3_raw: topRaw,\n  bottom3_raw: bottomRaw\n};\n\n// ---------- output ----------\nconst out = {\n  brand: BRAND,\n  period: PERIOD,\n  totals,\n  by_channel,\n  channel_split,\n  highs_lows,\n  source_rows: rows.length,\n  grouped_rows: data.length\n};\nreturn [{ json: out }];",
+        "jsCode": "/***\n * Compile Period: last_week\n ***/\nconst PERIOD = 'last_week';\nconst rows = $input.all().map(i => i.json || {});\n\nfunction toNum(v) {\n  if (v == null || v === '') return 0;\n  const n = Number(String(v).replace(/,/g,'.').replace(/[^0-9.\\-]/g,''));\n  return Number.isFinite(n) ? n : 0;\n}\nfunction normChannel(v) {\n  const s = String(v || '').toUpperCase().replace(/[_\\s]/g,' ').trim();\n  if (s.includes('SEARCH')) return 'SEARCH';\n  if (s.includes('PERFORMANCE') || s.includes('PMAX') || s.includes('MAX')) return 'PERFORMANCE MAX';\n  return s || 'OTHER';\n}\nconst safeDiv = (n, d) => (d && Number.isFinite(n) && Number.isFinite(d)) ? n/d : 0;\n\nfunction compileRows(rows) {\n  const byId = {};\n  for (const r of rows) {\n    const id   = String(r.campaign_id   || '').trim();\n    const name = String(r.campaign_name || '').trim();\n    const ch   = normChannel(r.channel  || '');\n    if (!id && !name) continue;\n    const key = id || name;\n    if (!byId[key]) byId[key] = {id, name, channel:ch, imp:0, clk:0, spend:0, conv:0, value:0};\n    byId[key].imp   += toNum(r.impressions);\n    byId[key].clk   += toNum(r.clicks);\n    byId[key].spend += toNum(r.cost);\n    byId[key].conv  += toNum(r.conversions);\n    byId[key].value += toNum(r.conv_value);\n  }\n  const campaigns = Object.values(byId).map(c => ({\n    ...c,\n    ctr:  safeDiv(c.clk,   c.imp),\n    cpc:  safeDiv(c.spend, c.clk),\n    cvr:  safeDiv(c.conv,  c.clk),\n    roas: safeDiv(c.value, c.spend),\n  }));\n  const totals = {imp:0, clicks:0, spend:0, conv:0, value:0};\n  for (const c of campaigns) {\n    totals.imp    += c.imp;\n    totals.clicks += c.clk;\n    totals.spend  += c.spend;\n    totals.conv   += c.conv;\n    totals.value  += c.value;\n  }\n  totals.ctr  = safeDiv(totals.clicks, totals.imp);\n  totals.cpc  = safeDiv(totals.spend,  totals.clicks);\n  totals.cvr  = safeDiv(totals.conv,   totals.clicks);\n  totals.roas = safeDiv(totals.value,  totals.spend);\n  const byChannel = {};\n  for (const c of campaigns) {\n    const ch = c.channel;\n    if (!byChannel[ch]) byChannel[ch] = {imp:0, clicks:0, spend:0, conv:0, value:0};\n    byChannel[ch].imp    += c.imp;\n    byChannel[ch].clicks += c.clk;\n    byChannel[ch].spend  += c.spend;\n    byChannel[ch].conv   += c.conv;\n    byChannel[ch].value  += c.value;\n  }\n  for (const b of Object.values(byChannel)) {\n    b.ctr  = safeDiv(b.clicks, b.imp);\n    b.cpc  = safeDiv(b.spend,  b.clicks);\n    b.roas = safeDiv(b.value,  b.spend);\n  }\n  const ranked = campaigns.filter(c => c.spend >= 10).sort((a,b) => b.roas - a.roas);\n  return { totals, by_channel: byChannel, campaigns,\n           top3_labels: ranked.slice(0,3).map(c=>c.name),\n           bottom3_labels: ranked.slice(-3).map(c=>c.name).reverse() };\n}\n\nconst result = compileRows(rows);\nreturn [{ json: { period: PERIOD, brand: 'MM', ...result } }];",
         "mode": "runOnceForAllItems"
       }
     },
     {
-      "id": "9d36390e-84ef-490c-aec1-46108013a9b0",
+      "id": "a83958e6-a5a8-49d6-bc97-7f120c641ab5",
       "name": "Compile: prev_week",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        480,
-        820
+        520,
+        800
       ],
       "parameters": {
-        "jsCode": "/******************************************************\n * Google Ads \u2192 Compile Results (Weekly v4.5w)\n * - Same logic as monthly v4.5, adapted for weekly periods\n * - Ignores Date columns (groups all rows by campaign)\n * - Computes ROAS = conv_value / cost\n * - Rounds conversions (display) to \u22642 decimals\n * - Formats Top/Bottom 3 labels cleanly\n ******************************************************/\nconst BRAND  = 'MM';          // \u2190 'MT' or 'MM'\nconst PERIOD = 'prev_week';   // \u2190 'last_week' or 'prev_week'\nconst MIN_SPEND_FOR_RANK = 50; // a bit lower for weekly\nconst MIN_NAME_LEN = 2;\nconst DEBUG = false;\n\nconst rows = $input.all().map(i => i.json || {});\nconst up = s => (s ?? '').toString().trim().toUpperCase();\n\n// ---------- helpers ----------\nfunction toNum(v) {\n  if (v === null || v === undefined) return 0;\n  let s = String(v).replace(/\\u00A0/g,' ').replace(/[\u20ac\\s]/g,'').trim();\n  if (!s || s === '-') return 0;\n  const hasDot = s.includes('.'), hasCom = s.includes(',');\n  if (hasDot && hasCom) {\n    // handle \"12.345,67\" vs \"12,345.67\"\n    if (s.lastIndexOf(',') > s.lastIndexOf('.')) s = s.replace(/\\./g,'').replace(',', '.');\n    else s = s.replace(/,/g,'');\n  } else if (hasCom && !hasDot) {\n    const parts = s.split(',');\n    s = (parts[parts.length-1].length <= 2) ? (parts.slice(0,-1).join('') + '.' + parts.at(-1)) : s.replace(/,/g,'');\n  } else s = s.replace(/,/g,'');\n  const n = parseFloat(s);\n  return Number.isFinite(n) ? n : 0;\n}\nfunction toPct(v){\n  if (v === null || v === undefined) return 0;\n  let s = String(v).trim();\n  const pct = s.endsWith('%');\n  s = s.replace('%','');\n  const n = toNum(s);\n  return pct ? n/100 : (n>1 ? n/100 : n);\n}\nfunction normKey(k){ return String(k).toLowerCase().replace(/[\\s\\.\\(\\)\\-_/\\\\]/g,''); }\n\n// format conversions nicely (\u22642 decimals)\nfunction fmtConv(n) {\n  if (!Number.isFinite(n)) return '0';\n  const rounded = Math.round(n);\n  return Math.abs(n - rounded) < 1e-9 ? String(rounded) : n.toFixed(2);\n}\n\n// fuzzy getter (handles 'clk', 'clicks', localized headers, etc.)\nfunction getFuzzy(r, preds) {\n  const entries = Object.keys(r).map(k => ({ k, nk: normKey(k) }));\n  for (const {k,nk} of entries) {\n    for (const p of preds) {\n      if (typeof p === 'function' && p(nk)) return { key:k, value:r[k] };\n      if (p instanceof RegExp && p.test(nk)) return { key:k, value:r[k] };\n    }\n  }\n  return { key:null, value:undefined };\n}\n\n// pickers\nfunction pickCost(r){ return getFuzzy(r,[ nk => nk==='cost' || nk==='spend' || nk.endsWith('costeur') || nk==='kosten' ]); }\nfunction pickClicks(r){ return getFuzzy(r,[ nk => nk.includes('click') || nk==='clk' || nk==='klicks' ]); }\nfunction pickImps(r){ return getFuzzy(r,[ nk => nk.includes('impression') || nk==='imp' || nk==='einblendungen' ]); }\nfunction pickConv(r){ return getFuzzy(r,[ nk => nk.includes('allconv') || (nk.includes('conv') && !nk.includes('value')) || nk==='conversions' ]); }\nfunction pickConvValue(r){ return getFuzzy(r,[ nk => nk==='convvalue' || nk.includes('conversionvalue') || nk.includes('allconvvalue') || nk.includes('conv_value') || nk.includes('revenue') || nk.includes('umsatz') ]); }\nfunction pickROAS(r){ return getFuzzy(r,[ nk => nk==='roas' || nk.includes('returnonadspend') ]); }\nfunction pickValuePerCost(r){ return getFuzzy(r,[ nk => nk.includes('valuepercost') || nk.includes('convvaluepercost') ]); }\n\nconst normalizeChannel = (c) => {\n  const x = up(c);\n  if (x.includes('SEARCH')) return 'SEARCH';\n  if (x.includes('PERFORMANCE') || x.includes('P-MAX') || x.includes('PMAX')) return 'PERFORMANCE MAX';\n  if (x.includes('DEMAND') || x.includes('DISCOVERY') || x.includes('VIDEO') || x.includes('DISPLAY') || x.includes('YOUTUBE'))\n    return 'DEMAND GEN';\n  return x || 'UNKNOWN';\n};\n\n// ---------- main mapping ----------\nfunction mapRow(r){\n  const name =\n    (r.name ?? r.campaign_name ?? r['Campaign'] ?? r['Kampagne'] ?? r['campaign'] ?? r.id ?? '').toString().trim() || `Unknown_${r.id ?? ''}`;\n  const channel = normalizeChannel(r.channel ?? r.campaign_type ?? r['Channel'] ?? r['Netzwerk'] ?? '');\n\n  const costK = pickCost(r), clicksK = pickClicks(r), impsK = pickImps(r);\n  const convK = pickConv(r), valK = pickConvValue(r);\n  const roasK = pickROAS(r), vpcK = pickValuePerCost(r);\n\n  const cost = toNum(costK.value);\n  const clk  = toNum(clicksK.value);\n  const imp  = toNum(impsK.value);\n  const conv = toNum(convK.value);\n  let val    = toNum(valK.value);\n\n  const roasFromCol = toNum(roasK.value);\n  const roasFromVpc = toNum(vpcK.value);\n  if (val === 0 && roasFromCol > 0 && cost > 0) val = roasFromCol * cost;\n  else if (val === 0 && roasFromVpc > 0 && cost > 0) val = roasFromVpc * cost;\n\n  const roas = (cost > 0 && val > 0) ? (val / cost) : 0;\n  const ctr  = imp>0 ? (clk/imp) : toPct(r.ctr ?? r['CTR']);\n  const cpc  = clk>0 ? (cost/clk) : toNum(r.cpc ?? r['CPC']);\n  const cvr  = clk>0 ? (conv/clk) : toPct(r.cvr ?? r['CVR'] ?? r['Conv rate']);\n\n  if (DEBUG) console.log('Mapped', name, { cost, val, conv, roas });\n\n  return { name, channel, imp, clk, cost, conv, val, ctr, cpc, cvr, roas };\n}\n\n// ---------- group by campaign ----------\nconst mapped = rows.map(mapRow).filter(d => d.name && d.name.length >= MIN_NAME_LEN);\nconst grouped = {};\nfor (const r of mapped) {\n  const k = r.name;\n  if (!grouped[k]) grouped[k] = { ...r };\n  else {\n    const g = grouped[k];\n    g.imp += r.imp; g.clk += r.clk; g.cost += r.cost; g.conv += r.conv; g.val += r.val;\n    g.ctr = g.imp>0 ? (g.clk/g.imp) : 0;\n    g.cpc = g.clk>0 ? (g.cost/g.clk) : 0;\n    g.cvr = g.clk>0 ? (g.conv/g.clk) : 0;\n    g.roas = g.cost>0 ? (g.val/g.cost) : 0;\n  }\n}\nconst data = Object.values(grouped);\n\n// ---------- totals ----------\nconst sum = (arr,k)=>arr.reduce((a,r)=>a+(r[k]||0),0);\nconst totals = {\n  spend: sum(data,'cost'),\n  value: sum(data,'val'),\n  conv:  sum(data,'conv'),\n  clicks: sum(data,'clk'),\n  impressions: sum(data,'imp'),\n};\ntotals.roas = totals.spend>0 ? (totals.value/totals.spend) : 0;\n\n// ---------- per-channel ----------\nconst by_channel = {};\nfor (const r of data) {\n  const ch = r.channel || 'UNKNOWN';\n  if (!by_channel[ch]) by_channel[ch] = { spend:0, value:0, conv:0, clicks:0, impressions:0 };\n  const g = by_channel[ch];\n  g.spend += r.cost; g.value += r.val; g.conv += r.conv; g.clicks += r.clk; g.impressions += r.imp;\n}\nfor (const ch of Object.keys(by_channel)) {\n  const g = by_channel[ch];\n  g.roas = g.spend>0 ? (g.value/g.spend) : 0;\n  g.ctr  = g.impressions>0 ? (g.clicks/g.impressions) : 0;\n  g.cpc  = g.clicks>0 ? (g.spend/g.clicks) : 0;\n}\nconst channel_split = {};\nfor (const ch of Object.keys(by_channel)) {\n  channel_split[ch] = totals.spend>0 ? (by_channel[ch].spend/totals.spend) : 0;\n}\n\n// ---------- highs & lows ----------\nconst eligible = data.filter(r => r.cost >= MIN_SPEND_FOR_RANK).sort((a,b)=>b.roas-a.roas);\nfunction toEntry(r){\n  const cvrPct = r.clk>0 ? (r.conv/r.clk)*100 : (r.cvr*100);\n  const ctrPct = r.imp>0 ? (r.clk/r.imp)*100 : (r.ctr*100);\n  return {\n    name:r.name,\n    roas:r.roas,\n    conv:r.conv,\n    conv_display: fmtConv(r.conv),\n    cvr_pct:cvrPct||0,\n    spend:r.cost,\n    clicks:r.clk,\n    ctr_pct:ctrPct||0,\n    cpc:r.cpc\n  };\n}\nconst topRaw = eligible.slice(0,3).map(toEntry);\nconst bottomRaw = eligible.length>=6 ? eligible.slice().sort((a,b)=>a.roas-b.roas).slice(0,3).map(toEntry) : [];\n\n// formatted label\nconst label = e => `${e.name} (ROAS ${e.roas.toFixed(2)}, CVR ${e.cvr_pct.toFixed(2)}%, ${fmtConv(e.conv)} conv)`;\n\nconst highs_lows = {\n  top3_labels: topRaw.map(label),\n  bottom3_labels: bottomRaw.map(label),\n  top3_raw: topRaw,\n  bottom3_raw: bottomRaw\n};\n\n// ---------- output ----------\nconst out = {\n  brand: BRAND,\n  period: PERIOD,\n  totals,\n  by_channel,\n  channel_split,\n  highs_lows,\n  source_rows: rows.length,\n  grouped_rows: data.length\n};\nreturn [{ json: out }];",
+        "jsCode": "/***\n * Compile Period: prev_week\n ***/\nconst PERIOD = 'prev_week';\nconst rows = $input.all().map(i => i.json || {});\n\nfunction toNum(v) {\n  if (v == null || v === '') return 0;\n  const n = Number(String(v).replace(/,/g,'.').replace(/[^0-9.\\-]/g,''));\n  return Number.isFinite(n) ? n : 0;\n}\nfunction normChannel(v) {\n  const s = String(v || '').toUpperCase().replace(/[_\\s]/g,' ').trim();\n  if (s.includes('SEARCH')) return 'SEARCH';\n  if (s.includes('PERFORMANCE') || s.includes('PMAX') || s.includes('MAX')) return 'PERFORMANCE MAX';\n  return s || 'OTHER';\n}\nconst safeDiv = (n, d) => (d && Number.isFinite(n) && Number.isFinite(d)) ? n/d : 0;\n\nfunction compileRows(rows) {\n  const byId = {};\n  for (const r of rows) {\n    const id   = String(r.campaign_id   || '').trim();\n    const name = String(r.campaign_name || '').trim();\n    const ch   = normChannel(r.channel  || '');\n    if (!id && !name) continue;\n    const key = id || name;\n    if (!byId[key]) byId[key] = {id, name, channel:ch, imp:0, clk:0, spend:0, conv:0, value:0};\n    byId[key].imp   += toNum(r.impressions);\n    byId[key].clk   += toNum(r.clicks);\n    byId[key].spend += toNum(r.cost);\n    byId[key].conv  += toNum(r.conversions);\n    byId[key].value += toNum(r.conv_value);\n  }\n  const campaigns = Object.values(byId).map(c => ({\n    ...c,\n    ctr:  safeDiv(c.clk,   c.imp),\n    cpc:  safeDiv(c.spend, c.clk),\n    cvr:  safeDiv(c.conv,  c.clk),\n    roas: safeDiv(c.value, c.spend),\n  }));\n  const totals = {imp:0, clicks:0, spend:0, conv:0, value:0};\n  for (const c of campaigns) {\n    totals.imp    += c.imp;\n    totals.clicks += c.clk;\n    totals.spend  += c.spend;\n    totals.conv   += c.conv;\n    totals.value  += c.value;\n  }\n  totals.ctr  = safeDiv(totals.clicks, totals.imp);\n  totals.cpc  = safeDiv(totals.spend,  totals.clicks);\n  totals.cvr  = safeDiv(totals.conv,   totals.clicks);\n  totals.roas = safeDiv(totals.value,  totals.spend);\n  const byChannel = {};\n  for (const c of campaigns) {\n    const ch = c.channel;\n    if (!byChannel[ch]) byChannel[ch] = {imp:0, clicks:0, spend:0, conv:0, value:0};\n    byChannel[ch].imp    += c.imp;\n    byChannel[ch].clicks += c.clk;\n    byChannel[ch].spend  += c.spend;\n    byChannel[ch].conv   += c.conv;\n    byChannel[ch].value  += c.value;\n  }\n  for (const b of Object.values(byChannel)) {\n    b.ctr  = safeDiv(b.clicks, b.imp);\n    b.cpc  = safeDiv(b.spend,  b.clicks);\n    b.roas = safeDiv(b.value,  b.spend);\n  }\n  const ranked = campaigns.filter(c => c.spend >= 10).sort((a,b) => b.roas - a.roas);\n  return { totals, by_channel: byChannel, campaigns,\n           top3_labels: ranked.slice(0,3).map(c=>c.name),\n           bottom3_labels: ranked.slice(-3).map(c=>c.name).reverse() };\n}\n\nconst result = compileRows(rows);\nreturn [{ json: { period: PERIOD, brand: 'MM', ...result } }];",
         "mode": "runOnceForAllItems"
       }
     },
     {
-      "id": "20f84213-e09a-4fbc-bd8d-42acc29691ad",
+      "id": "13644b96-5fa3-47fb-94e2-507cce646950",
       "name": "Budget Compile (weekly)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        480,
-        1040
+        520,
+        960
       ],
       "parameters": {
-        "jsCode": "// MindMeister weekly: CURRENT month (rows 43 Summe, 44 Leftover)\n\nconst BRAND = \"MindMeister\";\nconst SUM_ROW = 43;     // Summe\nconst LEFT_ROW = 44;    // Leftover\nconst MODE = \"current\"; // \"current\" | \"last\"\n\nconst MONTHS = [\"January\",\"February\",\"March\",\"April\",\"May\",\"June\",\"July\",\"August\",\"September\",\"October\",\"November\",\"December\"];\nconst now = new Date();\nconst monthName = MODE === \"last\" ? MONTHS[(now.getMonth()+11)%12] : MONTHS[now.getMonth()];\n\nconst rows = $input.all().map(i => i.json);\n\nfunction labelOf(r){\n  // Prefer \"col_1\" if present; else first key\n  const k = Object.keys(r).find(x => /^col[\\s_]*1$/i.test(x)) || Object.keys(r)[0];\n  return String(r?.[k] ?? \"\").trim();\n}\nfunction findRow(sumOrLeft) {\n  const wanted = sumOrLeft === \"sum\" ? \"summe\" : \"leftover\";\n  let row = rows.find(r => labelOf(r).toLowerCase() === wanted);\n  if (!row) row = rows.find(r => Number(r.row_number) === (sumOrLeft === \"sum\" ? SUM_ROW : LEFT_ROW));\n  return row;\n}\nfunction toNum(v){\n  if (typeof v === \"number\") return v;\n  if (v == null || v === \"\") return 0;\n  const s = String(v).trim().replace(/\\s/g,\"\").replace(/[\u20ac]/g,\"\").replace(/\\./g,\"\").replace(/,/g,\".\").replace(/[^\\d.\\-]/g,\"\");\n  const n = Number(s);\n  return Number.isFinite(n) ? n : 0;\n}\nfunction fmtEUR(n){\n  const num = n.toLocaleString(\"de-DE\",{minimumFractionDigits:2,maximumFractionDigits:2});\n  return `\u20ac${num}`;\n}\n\nconst rowSum = findRow(\"sum\");\nconst rowLeft = findRow(\"left\");\n\nconst spend = toNum(rowSum?.[monthName]);\nconst leftover = toNum(rowLeft?.[monthName]);\nconst budget = spend + leftover;\nconst pct = budget ? Number(((spend / budget) * 100).toFixed(1)) : 0;\n\nreturn [{\n  json: {\n    source: BRAND,\n    month_name: monthName,\n    total_budget: budget,\n    total_spend: spend,\n    leftover,\n    pct_spent: pct,\n    summary_text: `Total budget: ${fmtEUR(budget)} \u2014 total spend: ${fmtEUR(spend)} (${pct}% used, ${fmtEUR(leftover)} left)`\n  }\n}];",
+        "jsCode": "\n// MindMeister - Current month budget pacing\nconst BRAND = \"MindMeister\";\nconst MODE = \"current\";\nconst MONTHS = [\"January\",\"February\",\"March\",\"April\",\"May\",\"June\",\"July\",\"August\",\"September\",\"October\",\"November\",\"December\"];\nconst now = new Date();\nconst monthName = MODE === \"last\" ? MONTHS[(now.getMonth()+11)%12] : MONTHS[now.getMonth()];\nconst rows = $input.all().map(i => i.json);\nfunction labelOf(r){ const k=Object.keys(r).find(x=>/^col[\\s_]*1$/i.test(x))||Object.keys(r)[0]; return String(r?.[k]??\"\").trim(); }\nfunction findRow(t){ const w=t===\"sum\"?\"summe\":\"leftover\"; let r=rows.find(r=>labelOf(r).toLowerCase()===w); if(!r) r=rows.find(r=>Number(r.row_number)===(t===\"sum\"?43:44)); return r; }\nfunction toNum(v){ if(typeof v===\"number\") return v; if(v==null||v===\"\") return 0; const s=String(v).trim().replace(/\\s/g,\"\").replace(/[\u20ac]/g,\"\").replace(/\\./g,\"\").replace(/,/g,\".\").replace(/[^\\d.\\-]/g,\"\"); const n=Number(s); return Number.isFinite(n)?n:0; }\nfunction fmtEUR(n){ return `\u20ac${n.toLocaleString(\"de-DE\",{minimumFractionDigits:2,maximumFractionDigits:2})}`; }\nconst rowSum=findRow(\"sum\"), rowLeft=findRow(\"left\");\nconst spend=toNum(rowSum?.[monthName]), leftover=toNum(rowLeft?.[monthName]);\nconst budget=spend+leftover, pct=budget?Number(((spend/budget)*100).toFixed(1)):0;\nreturn [{ json: { source:BRAND, month_name:monthName, total_budget:budget, total_spend:spend, leftover, pct_spent:pct, summary_text:`Total budget: ${fmtEUR(budget)} \u2014 total spend: ${fmtEUR(spend)} (${pct}% used, ${fmtEUR(leftover)} left)` } }];\n",
         "mode": "runOnceForAllItems"
       }
     },
     {
-      "id": "aaf96e86-f3c6-4841-83fe-be0962c96f5d",
+      "id": "ca0d6054-9af8-4541-b548-3422e7eadb44",
       "name": "Merge: Weekly Pair",
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3,
       "position": [
-        720,
-        580
+        780,
+        720
       ],
       "parameters": {
         "mode": "append"
       }
     },
     {
-      "id": "9760bd48-ebba-413f-84a2-cd1cf101d5f2",
+      "id": "dc411a14-be63-4c7c-adb5-58a67eb12168",
       "name": "Wrap MM Week",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        960,
-        580
+        1040,
+        720
       ],
       "parameters": {
-        "jsCode": "// Input: exactly two items from the brand-level Merge (Append):\n// { brand:'MT'|'MM', period:'last_month'|'prev_month', ... }\n// Output: single item: { brand:'MT'|'MM', last:{...}, prev:{...} }\n\nconst items = $input.all().map(i => i.json);\nif (items.length !== 2) {\n  // Safety: if something upstream changes, fail loudly.\n  throw new Error(`Expected 2 items for brand bundle, got ${items.length}`);\n}\n\nconst brand = items[0]?.brand || items[1]?.brand || 'UNKNOWN';\nconst out = { brand, last: null, prev: null };\n\nfor (const it of items) {\n  if (it.period === 'last_week') out.last = it;\n  else if (it.period === 'prev_week') out.prev = it;\n}\n\nreturn [{ json: out }];",
+        "jsCode": "\nconst items = $input.all().map(i => i.json);\nif (items.length !== 2) throw new Error(`Expected 2 items, got ${items.length}`);\nconst out = { brand: 'MM', last: null, prev: null };\nfor (const it of items) {\n  if (it.period === 'last_week') out.last = it;\n  else if (it.period === 'prev_week') out.prev = it;\n}\nif (!out.last || !out.prev) throw new Error('Could not identify last/prev week items: ' + items.map(i=>i.period).join(', '));\nreturn [{ json: out }];\n",
         "mode": "runOnceForAllItems"
       }
     },
     {
-      "id": "15ae5ae4-5c9a-4784-b9a9-7e1e960271c6",
+      "id": "6874598b-97ab-4a81-9857-c04bb2e7d452",
       "name": "Merge: Weekly + Budget",
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3,
       "position": [
-        1200,
-        700
+        1300,
+        800
       ],
       "parameters": {
         "mode": "append"
       }
     },
     {
-      "id": "f02bb4b4-3db5-43f2-9528-653eb5dc1359",
+      "id": "9cf9c96f-a2b6-4a20-8154-2bb95e5d9e02",
       "name": "Prep Weekly for Agent",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1440,
-        700
+        1560,
+        800
       ],
       "parameters": {
-        "jsCode": "/***********************************************\n * Prep Weekly for Agent - MM only\n * Input: [wrap_mm_week item, budget item]\n * Output: { weekly_payload: { MM:{...}, meta } }\n ***********************************************/\nconst all = $input.all().map(i => i.json);\nconst mmBundle = all.find(i => i.brand === 'MM' && ('last' in i || 'prev' in i));\nconst budget   = all.find(i => i.source === 'MindMeister' || i.pct_spent !== undefined);\n\nif (!mmBundle) throw new Error('No MM weekly bundle found in input');\n\nconst last = mmBundle.last || {};\nconst prev = mmBundle.prev || {};\nconst pct  = (n, d) => (Number.isFinite(n) && Number.isFinite(d) && d !== 0) ? (n - d) / d : null;\n\nconst wow = {\n  spend:   pct(last.totals?.spend, prev.totals?.spend),\n  conv:    pct(last.totals?.conv,  prev.totals?.conv),\n  roas:    pct(last.totals?.roas,  prev.totals?.roas),\n  ctr:     pct(last.totals?.ctr,   prev.totals?.ctr),\n  cpc:     pct(last.totals?.cpc,   prev.totals?.cpc),\n  clicks:  pct(last.totals?.clicks,prev.totals?.clicks),\n};\n\n// Week date label\nconst now = new Date();\nconst dayMs = 86400000;\nconst monOffset = ((now.getDay() + 6) % 7);\nconst monday = new Date(now - monOffset * dayMs);\nconst lastMon = new Date(monday - 7 * dayMs);\nconst lastSun = new Date(lastMon.getTime() + 6 * dayMs);\nconst fmt = d => d.toISOString().split('T')[0];\nconst weekLabel = `${fmt(lastMon)} \u2013 ${fmt(lastSun)}`;\n\nreturn [{\n  json: {\n    weekly_payload: {\n      MM: {\n        last:          last,\n        prev:          prev,\n        wow:           wow,\n        per_channel:   last.by_channel || {},\n        highs_lows:    { top3: last.top3_labels || [], bottom3: last.bottom3_labels || [] },\n        budget:        budget || null,\n      },\n      meta: {\n        generated_at_iso: new Date().toISOString(),\n        week_label: weekLabel,\n        brand: 'MM',\n        type: 'weekly',\n      }\n    }\n  }\n}];",
+        "jsCode": "\n/*** Prep Weekly for Agent - MM only ***/\nconst all = $input.all().map(i => i.json);\nconst mmBundle = all.find(i => i.brand === 'MM' && ('last' in i || 'prev' in i));\nconst budget   = all.find(i => i.source === 'MindMeister' || i.pct_spent !== undefined);\nif (!mmBundle) throw new Error('No MM bundle: ' + JSON.stringify(all.map(i => Object.keys(i))));\nconst last = mmBundle.last || {}, prev = mmBundle.prev || {};\nconst pct  = (n, d) => (Number.isFinite(n) && Number.isFinite(d) && d !== 0) ? (n-d)/d : null;\nconst wow  = { spend: pct(last.totals?.spend, prev.totals?.spend),\n               conv:  pct(last.totals?.conv,  prev.totals?.conv),\n               roas:  pct(last.totals?.roas,  prev.totals?.roas),\n               ctr:   pct(last.totals?.ctr,   prev.totals?.ctr),\n               cpc:   pct(last.totals?.cpc,   prev.totals?.cpc),\n               clicks:pct(last.totals?.clicks,prev.totals?.clicks) };\nconst now = new Date(), dayMs = 86400000, mo = (now.getDay()+6)%7;\nconst mon = new Date(now - mo*dayMs), lastMon = new Date(mon - 7*dayMs);\nconst lastSun = new Date(lastMon.getTime() + 6*dayMs);\nconst fmt = d => d.toISOString().split('T')[0];\nreturn [{ json: { weekly_payload: { MM: { last, prev, wow,\n  per_channel: last.by_channel || {},\n  highs_lows: { top3: last.top3_labels||[], bottom3: last.bottom3_labels||[] },\n  budget: budget||null }, meta: { generated_at_iso: new Date().toISOString(),\n  week_label: `${fmt(lastMon)} \u2013 ${fmt(lastSun)}`, brand:'MM', type:'weekly' } } } }];\n",
         "mode": "runOnceForAllItems"
       }
     },
     {
-      "id": "bf56a67f-6e6b-41e8-80e7-9a67fa4d814f",
+      "id": "09572f4c-4fc0-4344-87e3-bfed676e5dd0",
       "name": "Weekly AI Agent",
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 1.7,
       "position": [
-        1680,
-        700
+        1820,
+        800
       ],
       "parameters": {
         "promptType": "define",
         "text": "={{ JSON.stringify($json) }}",
         "options": {
-          "systemMessage": "You are the Paid Performance Analyst for MindMeister (MM), producing weekly Google Ads performance reports.\n\nYour task: Produce a Slack-ready weekly paid performance summary using the supplied JSON data.\n\nINPUT\nYou receive one JSON object called weekly_payload with:\n{\n  \"MM\": {\n    \"last\": {...},    // last week compiled data (totals, by_channel, highs_lows)\n    \"prev\": {...},    // previous week compiled data\n    \"wow\": {...},     // week-over-week deltas (decimals, e.g. 0.12 = +12%)\n    \"per_channel\": {...},\n    \"highs_lows\": { \"top3\": [...], \"bottom3\": [...] },\n    \"budget\": { \"total_budget\": X, \"total_spend\": X, \"pct_spent\": X, \"leftover\": X }\n  },\n  \"meta\": { \"week_label\": \"YYYY-MM-DD \u2013 YYYY-MM-DD\", ... }\n}\n\nOUTPUT RULES\n\u2022 Output only one Slack message \u2014 no code blocks, no commentary, no backticks.\n\u2022 Use only Slack Markdown (*bold*, _italics_, bullets \u2022).\n\u2022 Keep total length roughly 150\u2013200 words.\n\u2022 Format money as \u20ac1,234. Round percentages to whole numbers; campaign efficiency to 2 decimals.\n\u2022 If data is missing, show \"n/a\". Neutral, factual tone.\n\u2022 Always use \"campaign efficiency\" instead of \"ROAS\".\n\nREQUIRED STRUCTURE\n*MindMeister Weekly Google Ads Report*\n_Reporting period: {meta.week_label}_\n\n*Spend at a glance*\n\u2022 Total spend: \u20acX (\u00b1Y% WoW)\n\u2022 Campaign efficiency: X.XX (\u00b1Y% WoW)\n\u2022 Channel split: Search A%, Performance Max B%, Demand Gen C%\n\u2022 Budget: \u20acX total | \u20acX spent (X%) | \u20acX remaining\n\n*Results per channel*\n\u2022 Search: efficiency X.XX, ~X conv.\n\u2022 Performance Max: efficiency X.XX, ~X conv.\n\u2022 Demand Gen: \u20acXk spend, Xk clicks, CTR X%, CPC \u20acX\n\n*Campaign highs & lows*\n\u2022 Top 3: [names from highs_lows.top3]\n\u2022 Bottom 3: [names from highs_lows.bottom3]\n\n*Recommendations*\n\u2022 2 concise, data-driven, action-based recommendations."
+          "systemMessage": "You are the Paid Performance Analyst for MindMeister (MM) Google Ads.\n\nYour task: Write a concise weekly performance commentary for a Slack report.\n\nINPUT\nYou receive { weekly_payload: { MM: { last, prev, wow, per_channel, highs_lows, budget }, meta } }\n\nFields in last/prev: totals { spend, clicks, conv, value, ctr, cpc, roas }\nwow fields: spend, clicks, conv, roas, ctr, cpc (decimal fractions, e.g. 0.12 = +12%)\n\nOUTPUT RULES\n\u2022 130\u2013180 words. Plain text only \u2014 no bullet symbols, no JSON, no backticks.\n\u2022 Structure: (1) headline metric (2) channel commentary (3) campaign highlights (4) 2 concrete recommendations.\n\u2022 Reference the week label from meta.week_label.\n\u2022 Format money as \u20acX,XXX. Round percentages to whole numbers.\n\u2022 Always say \"campaign efficiency\" instead of \"ROAS\".\n\u2022 Recommendations must be data-driven and specific (e.g. \"Reduce budget on DACH_de_PRICES by 15%\")."
         }
       }
     },
     {
-      "id": "f00f1fa9-9969-483d-92b0-f7956fb11212",
-      "name": "Weekly: OpenAI Model",
-      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
-      "typeVersion": 1.2,
+      "id": "83cd1b72-499c-40fd-9651-189ea1c471e2",
+      "name": "Weekly: Claude Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.1,
       "position": [
-        1680,
-        900
+        1820,
+        1000
       ],
       "parameters": {
-        "model": {
-          "__rl": true,
-          "value": "gpt-4o",
-          "mode": "list",
-          "cachedResultName": "gpt-4o"
-        },
+        "model": "claude-sonnet-4-6",
         "options": {}
-      },
-      "credentials": {
-        "openAiApi": {
-          "id": "qPj561bgQG6keBZ9",
-          "name": "Daan Open AI key"
-        }
       }
     },
     {
-      "id": "1a4e359f-d2d9-4f6a-9b4c-0a955e7a5fee",
+      "id": "d45fbbb9-62d1-48ea-be07-d487b6d9ccaf",
       "name": "Weekly: Memory",
       "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
       "typeVersion": 1.3,
       "position": [
-        1680,
-        1080
+        1820,
+        1180
       ],
       "parameters": {
         "contextWindowLength": 10
       }
     },
     {
-      "id": "8493729f-b463-40ab-8805-743141ef4b4b",
+      "id": "1cd2763d-9bf3-4927-a1d7-8ab07d30a70d",
+      "name": "Merge: AI + Weekly Data",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        2080,
+        800
+      ],
+      "parameters": {
+        "mode": "append"
+      }
+    },
+    {
+      "id": "41536ec0-55f5-44da-9a23-f223122da120",
+      "name": "Format Weekly Blocks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2340,
+        800
+      ],
+      "parameters": {
+        "jsCode": "\n/***\n * Format Weekly Slack Blocks\n ***/\nconst all    = $input.all().map(i => i.json);\nconst data   = all.find(i => i.weekly_payload !== undefined) || all[0];\nconst ai     = (all.find(i => i.output !== undefined) || {}).output || '';\nconst payload = data.weekly_payload || {};\nconst mm      = payload.MM || {};\nconst meta    = payload.meta || {};\n\nconst last   = mm.last?.totals    || {};\nconst prev   = mm.prev?.totals    || {};\nconst wow    = mm.wow             || {};\nconst budget = mm.budget           || {};\nconst ch     = mm.last?.by_channel || {};\n\nconst fmtEur  = n => `\u20ac${Number(n||0).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})}`;\nconst fmtNum  = n => Number(n||0).toLocaleString('de-DE');\nconst fmtRoas = n => Number(n||0).toFixed(2);\nconst fmtWow  = n => n==null ? 'n/a' : `${n>=0?'+':''}${(n*100).toFixed(1)}%`;\n\nconst blocks = [\n  { type: 'header', text: { type: 'plain_text', text: `\ud83d\udcca MM Weekly Google Ads \u2013 ${meta.week_label || 'Last Week'}`, emoji: true } },\n  { type: 'divider' },\n  {\n    type: 'section',\n    text: { type: 'mrkdwn', text: '*Performance summary*' },\n    fields: [\n      { type: 'mrkdwn', text: `*Spend*\\n${fmtEur(last.spend)}\\n_${fmtWow(wow.spend)} WoW_` },\n      { type: 'mrkdwn', text: `*Clicks*\\n${fmtNum(last.clicks)}\\n_${fmtWow(wow.clicks)} WoW_` },\n      { type: 'mrkdwn', text: `*Conversions*\\n${fmtNum(last.conv)}\\n_${fmtWow(wow.conv)} WoW_` },\n      { type: 'mrkdwn', text: `*Efficiency*\\n${fmtRoas(last.roas)}\\n_${fmtWow(wow.roas)} WoW_` },\n      { type: 'mrkdwn', text: `*CPC*\\n${fmtEur(last.cpc)}\\n_${fmtWow(wow.cpc)} WoW_` },\n      { type: 'mrkdwn', text: `*CTR*\\n${((last.ctr||0)*100).toFixed(2)}%\\n_${fmtWow(wow.ctr)} WoW_` },\n    ]\n  },\n];\n\n// Budget\nif (budget.total_budget > 0) {\n  blocks.push({\n    type: 'section',\n    text: { type: 'mrkdwn', text: `*Budget pacing*   ${fmtEur(budget.total_spend)} spent of ${fmtEur(budget.total_budget)} (${budget.pct_spent}%) \u00b7 ${fmtEur(budget.leftover)} remaining` }\n  });\n}\n\n// Channel breakdown\nconst chKeys = Object.keys(ch);\nif (chKeys.length > 0) {\n  const chLines = chKeys.map(k => {\n    const b = ch[k];\n    return `\u2022 *${k}*: ${fmtEur(b.spend)} \u00b7 ${fmtNum(b.clicks)} clicks \u00b7 eff. ${fmtRoas(b.roas)} \u00b7 ${fmtNum(b.conv)} conv`;\n  }).join('\\n');\n  blocks.push({ type: 'divider' });\n  blocks.push({ type: 'section', text: { type: 'mrkdwn', text: `*Channel breakdown*\\n${chLines}` } });\n}\n\n// Top/Bottom\nconst top3    = mm.highs_lows?.top3    || mm.last?.top3_labels    || [];\nconst bottom3 = mm.highs_lows?.bottom3 || mm.last?.bottom3_labels || [];\nif (top3.length || bottom3.length) {\n  blocks.push({ type: 'divider' });\n  blocks.push({\n    type: 'section',\n    fields: [\n      { type: 'mrkdwn', text: `*\ud83c\udfc6 Top 3 (efficiency)*\\n${top3.map((n,i)=>`${i+1}. ${n}`).join('\\n') || 'n/a'}` },\n      { type: 'mrkdwn', text: `*\u26a0\ufe0f Bottom 3 (efficiency)*\\n${bottom3.map((n,i)=>`${i+1}. ${n}`).join('\\n') || 'n/a'}` },\n    ]\n  });\n}\n\n// AI commentary\nif (ai) {\n  blocks.push({ type: 'divider' });\n  blocks.push({ type: 'section', text: { type: 'mrkdwn', text: `*\ud83d\udca1 Analysis & Recommendations*\\n${ai.slice(0,3000)}` } });\n}\n\nblocks.push({ type: 'divider' });\nblocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: `_MindMeister Paid \u00b7 Weekly Report \u00b7 ${meta.week_label || ''}_` }] });\n\nreturn [{ json: { blocks, text: `\ud83d\udcca MM Weekly Google Ads \u2013 ${meta.week_label || 'Last Week'} | Spend: ${fmtEur(last.spend)} | Eff: ${fmtRoas(last.roas)}` } }];\n",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "824e83a2-838d-442e-9202-cb59681865cd",
       "name": "Slack: Weekly Report",
       "type": "n8n-nodes-base.slack",
       "typeVersion": 2.2,
       "position": [
-        1920,
-        700
+        2600,
+        800
       ],
       "parameters": {
         "select": "channel",
@@ -517,7 +653,8 @@
           "value": "C08NX15CMEJ",
           "mode": "id"
         },
-        "text": "={{ $json.output }}",
+        "text": "={{ $json.text }}",
+        "blocksUi": "={{ JSON.stringify($json.blocks) }}",
         "otherOptions": {
           "includeLinkToWorkflow": false,
           "botProfile": {
@@ -536,28 +673,13 @@
       }
     },
     {
-      "id": "7d16e56d-0591-4eda-93cf-dca13c6b9af4",
-      "name": "NOTE: Monthly Path",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
-      "position": [
-        -160,
-        1200
-      ],
-      "parameters": {
-        "content": "## \ud83d\udcc6 Monthly Path\nRuns on the **1st of every month at 10 AM**.\nReads from the `last_month` and `prev_month` tabs of your MM Google Sheet.\n\nTriggers MoM comparison + AI summary \u2192 Slack.",
-        "height": 120,
-        "width": 280
-      }
-    },
-    {
-      "id": "2857a177-af51-4fcc-a1cd-c793e2ec4c8c",
-      "name": "Monthly Trigger (1st, 10 AM)",
+      "id": "cd4e3d4e-bb5c-4d37-a8f6-9272b637a209",
+      "name": "Monthly Trigger (1st 10 AM)",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [
         0,
-        1400
+        1600
       ],
       "parameters": {
         "rule": {
@@ -572,13 +694,13 @@
       }
     },
     {
-      "id": "173417a1-a3fa-43d6-bf29-82bf1817cc26",
+      "id": "0618d82f-2cba-4c3b-9836-99204558d97e",
       "name": "MM Get last_month",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [
-        240,
-        1280
+        260,
+        1440
       ],
       "parameters": {
         "documentId": {
@@ -603,13 +725,13 @@
       }
     },
     {
-      "id": "3bc94277-6f6f-42a4-9d8d-79bcb28c014d",
+      "id": "9cf7af61-d8e5-4e28-bb56-098ba8325491",
       "name": "MM Get prev_month",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [
-        240,
-        1520
+        260,
+        1600
       ],
       "parameters": {
         "documentId": {
@@ -634,13 +756,13 @@
       }
     },
     {
-      "id": "3a2b31ac-d7e5-4947-ad48-d80756a89c63",
+      "id": "9000f1e6-f184-4e15-ba55-75da2e0135ee",
       "name": "MM Get Budget (last month)",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [
-        240,
-        1740
+        260,
+        1760
       ],
       "parameters": {
         "documentId": {
@@ -665,164 +787,180 @@
       }
     },
     {
-      "id": "fa472caa-980d-498d-94f5-7e92fa9acd53",
+      "id": "a0c42e3d-de65-4899-9292-590165f4402e",
       "name": "Compile: last_month",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        480,
-        1280
+        520,
+        1440
       ],
       "parameters": {
-        "jsCode": "/******************************************************\n * Google Ads \u2192 Compile Results (v4.5)\n * - Ignores Date columns (groups all rows by campaign)\n * - Computes ROAS = conv_value / cost\n * - Rounds conversions to max 2 decimals everywhere\n * - Formats Top/Bottom 3 labels cleanly\n ******************************************************/\nconst BRAND  = 'MM';          // 'MT' or 'MM'\nconst PERIOD = 'last_month';  // 'last_month' or 'prev_month'\nconst MIN_SPEND_FOR_RANK = 100;\nconst MIN_NAME_LEN = 2;\nconst DEBUG = false;\n\nconst rows = $input.all().map(i => i.json || {});\nconst up = s => (s ?? '').toString().trim().toUpperCase();\n\n// ---------- helpers ----------\nfunction toNum(v) {\n  if (v === null || v === undefined) return 0;\n  let s = String(v).replace(/\\u00A0/g,' ').replace(/[\u20ac\\s]/g,'').trim();\n  if (!s || s === '-') return 0;\n  const hasDot = s.includes('.'), hasCom = s.includes(',');\n  if (hasDot && hasCom) {\n    if (s.lastIndexOf(',') > s.lastIndexOf('.')) s = s.replace(/\\./g,'').replace(',', '.');\n    else s = s.replace(/,/g,'');\n  } else if (hasCom && !hasDot) {\n    const parts = s.split(',');\n    s = (parts[parts.length-1].length <= 2) ? (parts.slice(0,-1).join('') + '.' + parts.at(-1)) : s.replace(/,/g,'');\n  } else s = s.replace(/,/g,'');\n  const n = parseFloat(s);\n  return Number.isFinite(n) ? n : 0;\n}\nfunction toPct(v){ if(v===null||v===undefined) return 0; let s=String(v).trim(); const pct=s.endsWith('%'); s=s.replace('%',''); const n=toNum(s); return pct? n/100 : (n>1? n/100 : n); }\nfunction normKey(k){ return String(k).toLowerCase().replace(/[\\s\\.\\(\\)\\-_/\\\\]/g,''); }\n\n// format conversions nicely (\u22642 decimals)\nfunction fmtConv(n) {\n  if (!Number.isFinite(n)) return '0';\n  const rounded = Math.round(n);\n  return Math.abs(n - rounded) < 1e-9 ? String(rounded) : n.toFixed(2);\n}\n\n// fuzzy getter\nfunction getFuzzy(r, preds) {\n  const entries = Object.keys(r).map(k => ({ k, nk: normKey(k) }));\n  for (const {k,nk} of entries) {\n    for (const p of preds) {\n      if (typeof p === 'function' && p(nk)) return { key:k, value:r[k] };\n      if (p instanceof RegExp && p.test(nk)) return { key:k, value:r[k] };\n    }\n  }\n  return { key:null, value:undefined };\n}\n\n// pickers\nfunction pickCost(r){ return getFuzzy(r,[ nk => nk==='cost' || nk==='spend' || nk.endsWith('costeur') || nk==='kosten']); }\nfunction pickClicks(r){ return getFuzzy(r,[ nk => nk.includes('click') || nk==='klicks']); }\nfunction pickImps(r){ return getFuzzy(r,[ nk => nk.includes('impression') || nk==='einblendungen']); }\nfunction pickConv(r){ return getFuzzy(r,[ nk => nk.includes('allconv') || (nk.includes('conv') && !nk.includes('value')) || nk==='conversions']); }\nfunction pickConvValue(r){ return getFuzzy(r,[ nk => nk==='convvalue' || nk.includes('conversionvalue') || nk.includes('allconvvalue') || nk.includes('conv_value') || nk.includes('revenue') || nk.includes('umsatz') ]); }\nfunction pickROAS(r){ return getFuzzy(r,[ nk => nk==='roas' || nk.includes('returnonadspend') ]); }\nfunction pickValuePerCost(r){ return getFuzzy(r,[ nk => nk.includes('valuepercost') || nk.includes('convvaluepercost') ]); }\n\nconst normalizeChannel = (c) => {\n  const x = up(c);\n  if (x.includes('SEARCH')) return 'SEARCH';\n  if (x.includes('PERFORMANCE') || x.includes('P-MAX') || x.includes('PMAX')) return 'PERFORMANCE MAX';\n  if (x.includes('DEMAND') || x.includes('DISCOVERY') || x.includes('VIDEO') || x.includes('DISPLAY') || x.includes('YOUTUBE'))\n    return 'DEMAND GEN';\n  return x || 'UNKNOWN';\n};\n\n// ---------- main mapping ----------\nfunction mapRow(r){\n  const name = (r.name ?? r.campaign_name ?? r['Campaign'] ?? '').toString().trim();\n  const channel = normalizeChannel(r.channel ?? r.campaign_type ?? r['Channel'] ?? '');\n\n  const costK = pickCost(r), clicksK = pickClicks(r), impsK = pickImps(r);\n  const convK = pickConv(r), valK = pickConvValue(r);\n  const roasK = pickROAS(r), vpcK = pickValuePerCost(r);\n\n  const cost = toNum(costK.value);\n  const clk  = toNum(clicksK.value);\n  const imp  = toNum(impsK.value);\n  const conv = toNum(convK.value);\n  let val    = toNum(valK.value);\n\n  const roasFromCol = toNum(roasK.value);\n  const roasFromVpc = toNum(vpcK.value);\n  if (val === 0 && roasFromCol > 0 && cost > 0) val = roasFromCol * cost;\n  else if (val === 0 && roasFromVpc > 0 && cost > 0) val = roasFromVpc * cost;\n\n  const roas = (cost > 0 && val > 0) ? (val / cost) : 0;\n  const ctr  = imp>0 ? (clk/imp) : toPct(r.ctr ?? r['CTR']);\n  const cpc  = clk>0 ? (cost/clk) : toNum(r.cpc ?? r['CPC']);\n  const cvr  = clk>0 ? (conv/clk) : toPct(r.cvr ?? r['CVR'] ?? r['Conv rate']);\n\n  if (DEBUG) console.log('Mapped', name, { cost, val, conv, roas });\n\n  return { name, channel, imp, clk, cost, conv, val, ctr, cpc, cvr, roas };\n}\n\n// ---------- group by campaign ----------\nconst mapped = rows.map(mapRow).filter(d => d.name && d.name.length >= MIN_NAME_LEN);\nconst grouped = {};\nfor (const r of mapped) {\n  const k = r.name;\n  if (!grouped[k]) grouped[k] = { ...r };\n  else {\n    const g = grouped[k];\n    g.imp += r.imp; g.clk += r.clk; g.cost += r.cost; g.conv += r.conv; g.val += r.val;\n    g.ctr = g.imp>0 ? (g.clk/g.imp) : 0;\n    g.cpc = g.clk>0 ? (g.cost/g.clk) : 0;\n    g.cvr = g.clk>0 ? (g.conv/g.clk) : 0;\n    g.roas = g.cost>0 ? (g.val/g.cost) : 0;\n  }\n}\nconst data = Object.values(grouped);\n\n// ---------- totals ----------\nconst sum = (arr,k)=>arr.reduce((a,r)=>a+(r[k]||0),0);\nconst totals = {\n  spend: sum(data,'cost'),\n  value: sum(data,'val'),\n  conv:  sum(data,'conv'),\n  clicks: sum(data,'clk'),\n  impressions: sum(data,'imp'),\n};\ntotals.roas = totals.spend>0 ? (totals.value/totals.spend) : 0;\n\n// ---------- per-channel ----------\nconst by_channel = {};\nfor (const r of data) {\n  const ch = r.channel || 'UNKNOWN';\n  if (!by_channel[ch]) by_channel[ch] = { spend:0, value:0, conv:0, clicks:0, impressions:0 };\n  const g = by_channel[ch];\n  g.spend += r.cost; g.value += r.val; g.conv += r.conv; g.clicks += r.clk; g.impressions += r.imp;\n}\nfor (const ch of Object.keys(by_channel)) {\n  const g = by_channel[ch];\n  g.roas = g.spend>0 ? (g.value/g.spend) : 0;\n  g.ctr  = g.impressions>0 ? (g.clicks/g.impressions) : 0;\n  g.cpc  = g.clicks>0 ? (g.spend/g.clicks) : 0;\n}\nconst channel_split = {};\nfor (const ch of Object.keys(by_channel)) {\n  channel_split[ch] = totals.spend>0 ? (by_channel[ch].spend/totals.spend) : 0;\n}\n\n// ---------- highs & lows ----------\nconst eligible = data.filter(r => r.cost >= MIN_SPEND_FOR_RANK).sort((a,b)=>b.roas-a.roas);\nfunction toEntry(r){\n  const cvrPct = r.clk>0 ? (r.conv/r.clk)*100 : (r.cvr*100);\n  const ctrPct = r.imp>0 ? (r.clk/r.imp)*100 : (r.ctr*100);\n  return {\n    name:r.name,\n    roas:r.roas,\n    conv:r.conv,\n    conv_display: fmtConv(r.conv),\n    cvr_pct:cvrPct||0,\n    spend:r.cost,\n    clicks:r.clk,\n    ctr_pct:ctrPct||0,\n    cpc:r.cpc\n  };\n}\nconst topRaw = eligible.slice(0,3).map(toEntry);\nconst bottomRaw = eligible.length>=6 ? eligible.slice().sort((a,b)=>a.roas-b.roas).slice(0,3).map(toEntry) : [];\n\n// formatted label\nconst label = e => `${e.name} (ROAS ${e.roas.toFixed(2)}, CVR ${e.cvr_pct.toFixed(2)}%, ${fmtConv(e.conv)} conv)`;\n\nconst highs_lows = {\n  top3_labels: topRaw.map(label),\n  bottom3_labels: bottomRaw.map(label),\n  top3_raw: topRaw,\n  bottom3_raw: bottomRaw\n};\n\n// ---------- output ----------\nconst out = {\n  brand: BRAND,\n  period: PERIOD,\n  totals,\n  by_channel,\n  channel_split,\n  highs_lows,\n  source_rows: rows.length,\n  grouped_rows: data.length\n};\nreturn [{ json: out }];",
+        "jsCode": "/***\n * Compile Period: last_month\n ***/\nconst PERIOD = 'last_month';\nconst rows = $input.all().map(i => i.json || {});\n\nfunction toNum(v) {\n  if (v == null || v === '') return 0;\n  const n = Number(String(v).replace(/,/g,'.').replace(/[^0-9.\\-]/g,''));\n  return Number.isFinite(n) ? n : 0;\n}\nfunction normChannel(v) {\n  const s = String(v || '').toUpperCase().replace(/[_\\s]/g,' ').trim();\n  if (s.includes('SEARCH')) return 'SEARCH';\n  if (s.includes('PERFORMANCE') || s.includes('PMAX') || s.includes('MAX')) return 'PERFORMANCE MAX';\n  return s || 'OTHER';\n}\nconst safeDiv = (n, d) => (d && Number.isFinite(n) && Number.isFinite(d)) ? n/d : 0;\n\nfunction compileRows(rows) {\n  const byId = {};\n  for (const r of rows) {\n    const id   = String(r.campaign_id   || '').trim();\n    const name = String(r.campaign_name || '').trim();\n    const ch   = normChannel(r.channel  || '');\n    if (!id && !name) continue;\n    const key = id || name;\n    if (!byId[key]) byId[key] = {id, name, channel:ch, imp:0, clk:0, spend:0, conv:0, value:0};\n    byId[key].imp   += toNum(r.impressions);\n    byId[key].clk   += toNum(r.clicks);\n    byId[key].spend += toNum(r.cost);\n    byId[key].conv  += toNum(r.conversions);\n    byId[key].value += toNum(r.conv_value);\n  }\n  const campaigns = Object.values(byId).map(c => ({\n    ...c,\n    ctr:  safeDiv(c.clk,   c.imp),\n    cpc:  safeDiv(c.spend, c.clk),\n    cvr:  safeDiv(c.conv,  c.clk),\n    roas: safeDiv(c.value, c.spend),\n  }));\n  const totals = {imp:0, clicks:0, spend:0, conv:0, value:0};\n  for (const c of campaigns) {\n    totals.imp    += c.imp;\n    totals.clicks += c.clk;\n    totals.spend  += c.spend;\n    totals.conv   += c.conv;\n    totals.value  += c.value;\n  }\n  totals.ctr  = safeDiv(totals.clicks, totals.imp);\n  totals.cpc  = safeDiv(totals.spend,  totals.clicks);\n  totals.cvr  = safeDiv(totals.conv,   totals.clicks);\n  totals.roas = safeDiv(totals.value,  totals.spend);\n  const byChannel = {};\n  for (const c of campaigns) {\n    const ch = c.channel;\n    if (!byChannel[ch]) byChannel[ch] = {imp:0, clicks:0, spend:0, conv:0, value:0};\n    byChannel[ch].imp    += c.imp;\n    byChannel[ch].clicks += c.clk;\n    byChannel[ch].spend  += c.spend;\n    byChannel[ch].conv   += c.conv;\n    byChannel[ch].value  += c.value;\n  }\n  for (const b of Object.values(byChannel)) {\n    b.ctr  = safeDiv(b.clicks, b.imp);\n    b.cpc  = safeDiv(b.spend,  b.clicks);\n    b.roas = safeDiv(b.value,  b.spend);\n  }\n  const ranked = campaigns.filter(c => c.spend >= 10).sort((a,b) => b.roas - a.roas);\n  return { totals, by_channel: byChannel, campaigns,\n           top3_labels: ranked.slice(0,3).map(c=>c.name),\n           bottom3_labels: ranked.slice(-3).map(c=>c.name).reverse() };\n}\n\nconst result = compileRows(rows);\nreturn [{ json: { period: PERIOD, brand: 'MM', ...result } }];",
         "mode": "runOnceForAllItems"
       }
     },
     {
-      "id": "52cc9ae9-cb1c-4eec-b6c6-f19d094b9e76",
+      "id": "6f9b991c-382c-46e3-b1ff-7cab4ec6f312",
       "name": "Compile: prev_month",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        480,
-        1520
+        520,
+        1600
       ],
       "parameters": {
-        "jsCode": "// INPUT: rows of campaigns for last week (fields like: id,name,channel,imp,clk,cost,conv,val,ctr,cpc,cvr,roas)\n// OUTPUT: one item: { brand:'MT'|'MM', period:'last_week', totals, by_channel, channel_split, highs_lows }\n\nconst BRAND = 'MM';           // \u2190 change to 'MM' in the MM node\nconst PERIOD = 'prev_month';   // \u2190 for \"Week before\" node use 'prev_week'\n\nconst rows = $input.all().map(i => i.json);\n\n// helpers\nconst sum = (arr, f) => arr.reduce((a, x) => a + (f(x) || 0), 0);\nconst safeDiv = (n, d) => (d ? n / d : 0);\n\n// totals\nconst spend = sum(rows, r => r.cost);\nconst clicks = sum(rows, r => r.clk);\nconst conv = sum(rows, r => r.conv);\nconst value = sum(rows, r => r.val);\nconst roas = safeDiv(value, spend);\n\n// channel agg\nconst byKey = {};\nfor (const r of rows) {\n  const ch = String(r.channel || 'OTHER').toUpperCase();\n  byKey[ch] = byKey[ch] || { spend:0, clicks:0, conv:0, imp:0, value:0 };\n  byKey[ch].spend  += r.cost  || 0;\n  byKey[ch].clicks += r.clk   || 0;\n  byKey[ch].conv   += r.conv  || 0;\n  byKey[ch].imp    += r.imp   || 0;\n  byKey[ch].value  += r.val   || 0;\n}\nconst by_channel = {};\nObject.entries(byKey).forEach(([ch, g]) => {\n  by_channel[ch] = {\n    spend:  g.spend,\n    clicks: g.clicks,\n    conv:   g.conv,\n    roas:   safeDiv(g.value, g.spend),\n    ctr:    safeDiv(g.clicks, g.imp),\n    cpc:    safeDiv(g.spend, g.clicks),\n  };\n});\n\n// channel split (share of spend)\nconst channel_split = {};\nObject.entries(byKey).forEach(([ch, g]) => {\n  channel_split[ch] = spend ? g.spend / spend : 0;\n});\n\n// highs & lows by ROAS (labels only)\nconst withRoas = rows.map(r => ({ name: r.name || String(r.id || 'Unknown'), roas: r.roas ?? safeDiv(r.val, r.cost) }));\nwithRoas.sort((a,b) => (b.roas||0) - (a.roas||0));\nconst top3_labels = withRoas.slice(0,3).map(x => x.name);\nconst bottom3_labels = withRoas.slice(-3).map(x => x.name);\n\nreturn [{\n  json: {\n    brand: BRAND,\n    period: PERIOD,\n    totals: { spend, clicks, conv, value, roas },\n    by_channel,\n    channel_split,\n    highs_lows: { top3_labels, bottom3_labels }\n  }\n}];",
+        "jsCode": "/***\n * Compile Period: prev_month\n ***/\nconst PERIOD = 'prev_month';\nconst rows = $input.all().map(i => i.json || {});\n\nfunction toNum(v) {\n  if (v == null || v === '') return 0;\n  const n = Number(String(v).replace(/,/g,'.').replace(/[^0-9.\\-]/g,''));\n  return Number.isFinite(n) ? n : 0;\n}\nfunction normChannel(v) {\n  const s = String(v || '').toUpperCase().replace(/[_\\s]/g,' ').trim();\n  if (s.includes('SEARCH')) return 'SEARCH';\n  if (s.includes('PERFORMANCE') || s.includes('PMAX') || s.includes('MAX')) return 'PERFORMANCE MAX';\n  return s || 'OTHER';\n}\nconst safeDiv = (n, d) => (d && Number.isFinite(n) && Number.isFinite(d)) ? n/d : 0;\n\nfunction compileRows(rows) {\n  const byId = {};\n  for (const r of rows) {\n    const id   = String(r.campaign_id   || '').trim();\n    const name = String(r.campaign_name || '').trim();\n    const ch   = normChannel(r.channel  || '');\n    if (!id && !name) continue;\n    const key = id || name;\n    if (!byId[key]) byId[key] = {id, name, channel:ch, imp:0, clk:0, spend:0, conv:0, value:0};\n    byId[key].imp   += toNum(r.impressions);\n    byId[key].clk   += toNum(r.clicks);\n    byId[key].spend += toNum(r.cost);\n    byId[key].conv  += toNum(r.conversions);\n    byId[key].value += toNum(r.conv_value);\n  }\n  const campaigns = Object.values(byId).map(c => ({\n    ...c,\n    ctr:  safeDiv(c.clk,   c.imp),\n    cpc:  safeDiv(c.spend, c.clk),\n    cvr:  safeDiv(c.conv,  c.clk),\n    roas: safeDiv(c.value, c.spend),\n  }));\n  const totals = {imp:0, clicks:0, spend:0, conv:0, value:0};\n  for (const c of campaigns) {\n    totals.imp    += c.imp;\n    totals.clicks += c.clk;\n    totals.spend  += c.spend;\n    totals.conv   += c.conv;\n    totals.value  += c.value;\n  }\n  totals.ctr  = safeDiv(totals.clicks, totals.imp);\n  totals.cpc  = safeDiv(totals.spend,  totals.clicks);\n  totals.cvr  = safeDiv(totals.conv,   totals.clicks);\n  totals.roas = safeDiv(totals.value,  totals.spend);\n  const byChannel = {};\n  for (const c of campaigns) {\n    const ch = c.channel;\n    if (!byChannel[ch]) byChannel[ch] = {imp:0, clicks:0, spend:0, conv:0, value:0};\n    byChannel[ch].imp    += c.imp;\n    byChannel[ch].clicks += c.clk;\n    byChannel[ch].spend  += c.spend;\n    byChannel[ch].conv   += c.conv;\n    byChannel[ch].value  += c.value;\n  }\n  for (const b of Object.values(byChannel)) {\n    b.ctr  = safeDiv(b.clicks, b.imp);\n    b.cpc  = safeDiv(b.spend,  b.clicks);\n    b.roas = safeDiv(b.value,  b.spend);\n  }\n  const ranked = campaigns.filter(c => c.spend >= 10).sort((a,b) => b.roas - a.roas);\n  return { totals, by_channel: byChannel, campaigns,\n           top3_labels: ranked.slice(0,3).map(c=>c.name),\n           bottom3_labels: ranked.slice(-3).map(c=>c.name).reverse() };\n}\n\nconst result = compileRows(rows);\nreturn [{ json: { period: PERIOD, brand: 'MM', ...result } }];",
         "mode": "runOnceForAllItems"
       }
     },
     {
-      "id": "ef950452-2689-4416-b79e-89540fe822a8",
+      "id": "9a8e5350-94de-4f43-909e-742a87dcc47c",
       "name": "Budget Compile (monthly)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        480,
-        1740
+        520,
+        1760
       ],
       "parameters": {
-        "jsCode": "// MindMeister monthly: LAST month (rows 43 Summe, 44 Leftover)\n\nconst BRAND = \"MindMeister\";\nconst SUM_ROW = 43;     // Summe\nconst LEFT_ROW = 44;    // Leftover\nconst MODE = \"last\";    // \"current\" | \"last\"\n\nconst MONTHS = [\"January\",\"February\",\"March\",\"April\",\"May\",\"June\",\"July\",\"August\",\"September\",\"October\",\"November\",\"December\"];\nconst now = new Date();\nconst monthName = MODE === \"last\" ? MONTHS[(now.getMonth()+11)%12] : MONTHS[now.getMonth()];\n\nconst rows = $input.all().map(i => i.json);\n\nfunction labelOf(r){\n  const k = Object.keys(r).find(x => /^col[\\s_]*1$/i.test(x)) || Object.keys(r)[0];\n  return String(r?.[k] ?? \"\").trim();\n}\nfunction findRow(sumOrLeft) {\n  const wanted = sumOrLeft === \"sum\" ? \"summe\" : \"leftover\";\n  let row = rows.find(r => labelOf(r).toLowerCase() === wanted);\n  if (!row) row = rows.find(r => Number(r.row_number) === (sumOrLeft === \"sum\" ? SUM_ROW : LEFT_ROW));\n  return row;\n}\nfunction toNum(v){\n  if (typeof v === \"number\") return v;\n  if (v == null || v === \"\") return 0;\n  const s = String(v).trim().replace(/\\s/g,\"\").replace(/[\u20ac]/g,\"\").replace(/\\./g,\"\").replace(/,/g,\".\").replace(/[^\\d.\\-]/g,\"\");\n  const n = Number(s);\n  return Number.isFinite(n) ? n : 0;\n}\nfunction fmtEUR(n){\n  const num = n.toLocaleString(\"de-DE\",{minimumFractionDigits:2,maximumFractionDigits:2});\n  return `\u20ac${num}`;\n}\n\nconst rowSum = findRow(\"sum\");\nconst rowLeft = findRow(\"left\");\n\nconst spend = toNum(rowSum?.[monthName]);\nconst leftover = toNum(rowLeft?.[monthName]);\nconst budget = spend + leftover;\nconst pct = budget ? Number(((spend / budget) * 100).toFixed(1)) : 0;\n\nreturn [{\n  json: {\n    source: BRAND,\n    month_name: monthName,\n    total_budget: budget,\n    total_spend: spend,\n    leftover,\n    pct_spent: pct,\n    summary_text: `Total budget: ${fmtEUR(budget)} \u2014 total spend: ${fmtEUR(spend)} (${pct}% used, ${fmtEUR(leftover)} left)`\n  }\n}];",
+        "jsCode": "\n// MindMeister - Last month budget\nconst BRAND = \"MindMeister\";\nconst MODE = \"last\";\nconst MONTHS = [\"January\",\"February\",\"March\",\"April\",\"May\",\"June\",\"July\",\"August\",\"September\",\"October\",\"November\",\"December\"];\nconst now = new Date();\nconst monthName = MODE === \"last\" ? MONTHS[(now.getMonth()+11)%12] : MONTHS[now.getMonth()];\nconst rows = $input.all().map(i => i.json);\nfunction labelOf(r){ const k=Object.keys(r).find(x=>/^col[\\s_]*1$/i.test(x))||Object.keys(r)[0]; return String(r?.[k]??\"\").trim(); }\nfunction findRow(t){ const w=t===\"sum\"?\"summe\":\"leftover\"; let r=rows.find(r=>labelOf(r).toLowerCase()===w); if(!r) r=rows.find(r=>Number(r.row_number)===(t===\"sum\"?43:44)); return r; }\nfunction toNum(v){ if(typeof v===\"number\") return v; if(v==null||v===\"\") return 0; const s=String(v).trim().replace(/\\s/g,\"\").replace(/[\u20ac]/g,\"\").replace(/\\./g,\"\").replace(/,/g,\".\").replace(/[^\\d.\\-]/g,\"\"); const n=Number(s); return Number.isFinite(n)?n:0; }\nfunction fmtEUR(n){ return `\u20ac${n.toLocaleString(\"de-DE\",{minimumFractionDigits:2,maximumFractionDigits:2})}`; }\nconst rowSum=findRow(\"sum\"), rowLeft=findRow(\"left\");\nconst spend=toNum(rowSum?.[monthName]), leftover=toNum(rowLeft?.[monthName]);\nconst budget=spend+leftover, pct=budget?Number(((spend/budget)*100).toFixed(1)):0;\nreturn [{ json: { source:BRAND, month_name:monthName, total_budget:budget, total_spend:spend, leftover, pct_spent:pct, summary_text:`Total budget: ${fmtEUR(budget)} \u2014 total spend: ${fmtEUR(spend)} (${pct}% used, ${fmtEUR(leftover)} left)` } }];\n",
         "mode": "runOnceForAllItems"
       }
     },
     {
-      "id": "648fe955-c286-4ce2-a0b5-a4f92e4ebc30",
+      "id": "e23040a2-96bd-4910-9fec-5bb6bcda6c6f",
       "name": "Merge: Monthly Pair",
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3,
       "position": [
-        720,
-        1280
+        780,
+        1520
       ],
       "parameters": {
         "mode": "append"
       }
     },
     {
-      "id": "b4d51caa-f486-4104-acce-8046e3d12829",
+      "id": "d540fde7-8a43-46b5-b0e6-8f64009ef06f",
       "name": "Wrap MM Month",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        960,
-        1280
+        1040,
+        1520
       ],
       "parameters": {
-        "jsCode": "// Input: exactly two items from the brand-level Merge (Append):\n// { brand:'MT'|'MM', period:'last_week'|'prev_week', ... }\n// Output: single item: { brand:'MT'|'MM', last:{...}, prev:{...} }\n\nconst items = $input.all().map(i => i.json);\nif (items.length !== 2) {\n  // Safety: if something upstream changes, fail loudly.\n  throw new Error(`Expected 2 items for brand bundle, got ${items.length}`);\n}\n\nconst brand = items[0]?.brand || items[1]?.brand || 'UNKNOWN';\nconst out = { brand, last: null, prev: null };\n\nfor (const it of items) {\n  if (it.period === 'last_month') out.last = it;\n  else if (it.period === 'prev_month') out.prev = it;\n}\n\nreturn [{ json: out }];",
+        "jsCode": "\nconst items = $input.all().map(i => i.json);\nif (items.length !== 2) throw new Error(`Expected 2 items, got ${items.length}`);\nconst out = { brand: 'MM', last: null, prev: null };\nfor (const it of items) {\n  if (it.period === 'last_month') out.last = it;\n  else if (it.period === 'prev_month') out.prev = it;\n}\nif (!out.last || !out.prev) throw new Error('Could not identify last/prev month: ' + items.map(i=>i.period).join(', '));\nreturn [{ json: out }];\n",
         "mode": "runOnceForAllItems"
       }
     },
     {
-      "id": "3a1a4378-9d2a-445a-8efe-93b5de1477a3",
+      "id": "1d37ed5e-4ca9-4a5a-a2b1-0699b11e4355",
       "name": "Merge: Monthly + Budget",
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3,
       "position": [
-        1200,
-        1400
+        1300,
+        1600
       ],
       "parameters": {
         "mode": "append"
       }
     },
     {
-      "id": "5fc9729a-46aa-49e0-b1b0-072e1be167a9",
+      "id": "09ed8e91-273c-42d7-9f80-2ec41dd9b578",
       "name": "Prep Monthly for Agent",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1440,
-        1400
+        1560,
+        1600
       ],
       "parameters": {
-        "jsCode": "/***********************************************\n * Prep Monthly for Agent - MM only\n * Input: [wrap_mm_month item, budget item]\n * Output: { monthly_payload: { MM:{...}, meta } }\n ***********************************************/\nconst all = $input.all().map(i => i.json);\nconst mmBundle = all.find(i => i.brand === 'MM' && ('last' in i || 'prev' in i));\nconst budget   = all.find(i => i.source === 'MindMeister' || i.pct_spent !== undefined);\n\nif (!mmBundle) throw new Error('No MM monthly bundle found in input');\n\nconst last = mmBundle.last || {};\nconst prev = mmBundle.prev || {};\nconst pct  = (n, d) => (Number.isFinite(n) && Number.isFinite(d) && d !== 0) ? (n - d) / d : null;\n\nconst mom = {\n  spend:  pct(last.totals?.spend, prev.totals?.spend),\n  conv:   pct(last.totals?.conv,  prev.totals?.conv),\n  roas:   pct(last.totals?.roas,  prev.totals?.roas),\n  ctr:    pct(last.totals?.ctr,   prev.totals?.ctr),\n  cpc:    pct(last.totals?.cpc,   prev.totals?.cpc),\n  clicks: pct(last.totals?.clicks,prev.totals?.clicks),\n};\n\nconst MONTHS = ['January','February','March','April','May','June',\n                'July','August','September','October','November','December'];\nconst now = new Date();\nconst lastMonthName = MONTHS[(now.getMonth() + 11) % 12];\nconst lastMonthYear = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();\n\nreturn [{\n  json: {\n    monthly_payload: {\n      MM: {\n        last:        last,\n        prev:        prev,\n        mom:         mom,\n        per_channel: last.by_channel || {},\n        highs_lows:  { top3: last.top3_labels || [], bottom3: last.bottom3_labels || [] },\n        budget:      budget || null,\n      },\n      meta: {\n        generated_at_iso: new Date().toISOString(),\n        month_label: `${lastMonthName} ${lastMonthYear}`,\n        brand: 'MM',\n        type: 'monthly',\n      }\n    }\n  }\n}];",
+        "jsCode": "\n/*** Prep Monthly for Agent - MM only ***/\nconst all = $input.all().map(i => i.json);\nconst mmBundle = all.find(i => i.brand === 'MM' && ('last' in i || 'prev' in i));\nconst budget   = all.find(i => i.source === 'MindMeister' || i.pct_spent !== undefined);\nif (!mmBundle) throw new Error('No MM bundle: ' + JSON.stringify(all.map(i => Object.keys(i))));\nconst last = mmBundle.last || {}, prev = mmBundle.prev || {};\nconst pct  = (n, d) => (Number.isFinite(n) && Number.isFinite(d) && d !== 0) ? (n-d)/d : null;\nconst mom  = { spend: pct(last.totals?.spend, prev.totals?.spend),\n               conv:  pct(last.totals?.conv,  prev.totals?.conv),\n               roas:  pct(last.totals?.roas,  prev.totals?.roas),\n               ctr:   pct(last.totals?.ctr,   prev.totals?.ctr),\n               cpc:   pct(last.totals?.cpc,   prev.totals?.cpc),\n               clicks:pct(last.totals?.clicks,prev.totals?.clicks) };\nconst MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];\nconst now = new Date();\nconst mn = MONTHS[(now.getMonth()+11)%12], yr = now.getMonth()===0 ? now.getFullYear()-1 : now.getFullYear();\nreturn [{ json: { monthly_payload: { MM: { last, prev, mom,\n  per_channel: last.by_channel||{},\n  highs_lows: { top3: last.top3_labels||[], bottom3: last.bottom3_labels||[] },\n  budget: budget||null }, meta: { generated_at_iso: new Date().toISOString(),\n  month_label: `${mn} ${yr}`, brand:'MM', type:'monthly' } } } }];\n",
         "mode": "runOnceForAllItems"
       }
     },
     {
-      "id": "825bcb3c-52c5-4ff0-9d07-90e4730d6d32",
+      "id": "a1313168-a05c-400e-be54-574a0e507178",
       "name": "Monthly AI Agent",
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 1.7,
       "position": [
-        1680,
-        1400
+        1820,
+        1600
       ],
       "parameters": {
         "promptType": "define",
         "text": "={{ JSON.stringify($json) }}",
         "options": {
-          "systemMessage": "You are the Paid Performance Analyst for MindMeister (MM), producing monthly Google Ads performance reports.\n\nYour task: Produce a Slack-ready monthly paid performance summary using the supplied JSON data.\n\nINPUT\nYou receive one JSON object called monthly_payload with:\n{\n  \"MM\": {\n    \"last\": {...},    // last month compiled data (totals, by_channel, highs_lows)\n    \"prev\": {...},    // previous month compiled data\n    \"mom\": {...},     // month-over-month deltas (decimals)\n    \"per_channel\": {...},\n    \"highs_lows\": { \"top3\": [...], \"bottom3\": [...] },\n    \"budget\": { \"total_budget\": X, \"total_spend\": X, \"pct_spent\": X, \"leftover\": X }\n  },\n  \"meta\": { \"month_label\": \"Month YYYY\", ... }\n}\n\nOUTPUT RULES\n\u2022 Output only one Slack message \u2014 no code blocks, no commentary, no backticks.\n\u2022 Use only Slack Markdown (*bold*, _italics_, bullets \u2022).\n\u2022 Keep total length roughly 180\u2013240 words.\n\u2022 Format money as \u20ac1,234. Round percentages to whole numbers; campaign efficiency to 2 decimals.\n\u2022 If data is missing, show \"n/a\". Neutral, factual tone.\n\u2022 Always use \"campaign efficiency\" instead of \"ROAS\".\n\nREQUIRED STRUCTURE\n*MindMeister Monthly Google Ads Summary*\n_Reporting period: {meta.month_label}_\n\n*Spend at a glance*\n\u2022 Total spend: \u20acX (\u00b1Y% MoM)\n\u2022 Campaign efficiency: X.XX (\u00b1Y% MoM)\n\u2022 Conversions: X (\u00b1Y% MoM) | CPC: \u20acX (\u00b1Y% MoM)\n\u2022 Channel split: Search A%, Performance Max B%, Demand Gen C%\n\u2022 Budget: \u20acX total | \u20acX spent (X%) | \u20acX remaining\n\n*Results per channel*\n\u2022 Search: efficiency X.XX, ~X conv., CPC \u20acX\n\u2022 Performance Max: efficiency X.XX, ~X conv.\n\u2022 Demand Gen: traffic-focused \u2014 \u20acXk spend, CTR X%, CPC \u20acX\n\n*Campaign highs & lows*\n\u2022 Top 3 by efficiency: [names from highs_lows.top3]\n\u2022 Bottom 3 by efficiency: [names from highs_lows.bottom3]\n\n*Trend & recommendations*\n\u2022 1 sentence trend observation\n\u2022 3 concise, data-driven, action-based recommendations for the coming month."
+          "systemMessage": "You are the Paid Performance Analyst for MindMeister (MM) Google Ads.\n\nYour task: Write a comprehensive monthly performance commentary for a Slack report.\n\nINPUT\nYou receive { monthly_payload: { MM: { last, prev, mom, per_channel, highs_lows, budget }, meta } }\n\nFields in last/prev: totals { spend, clicks, conv, value, ctr, cpc, roas }\nmom fields: month-over-month % changes (decimal fractions)\n\nOUTPUT RULES\n\u2022 180\u2013240 words. Plain text only \u2014 no bullet symbols, no JSON, no backticks.\n\u2022 Structure: (1) month headline (2) channel performance (3) top/bottom campaigns (4) 3 actionable recommendations.\n\u2022 Reference meta.month_label in the intro.\n\u2022 Format money as \u20acX,XXX. Round percentages to whole numbers; campaign efficiency to 2 decimals.\n\u2022 Always say \"campaign efficiency\" instead of \"ROAS\".\n\u2022 Recommendations must be specific enough to act on immediately."
         }
       }
     },
     {
-      "id": "0030a952-4a0d-443d-9947-475848686d1d",
-      "name": "Monthly: OpenAI Model",
-      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
-      "typeVersion": 1.2,
+      "id": "94a78c20-1846-4206-86ce-822b16d441de",
+      "name": "Monthly: Claude Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.1,
       "position": [
-        1680,
-        1600
+        1820,
+        1800
       ],
       "parameters": {
-        "model": {
-          "__rl": true,
-          "value": "gpt-4o",
-          "mode": "list",
-          "cachedResultName": "gpt-4o"
-        },
+        "model": "claude-sonnet-4-6",
         "options": {}
-      },
-      "credentials": {
-        "openAiApi": {
-          "id": "qPj561bgQG6keBZ9",
-          "name": "Daan Open AI key"
-        }
       }
     },
     {
-      "id": "e560e1b7-a685-41aa-b5c0-f6718fee8a0f",
+      "id": "2d83ab58-feba-41cf-bc4d-899d5037e466",
       "name": "Monthly: Memory",
       "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
       "typeVersion": 1.3,
       "position": [
-        1680,
-        1780
+        1820,
+        1980
       ],
       "parameters": {
         "contextWindowLength": 10
       }
     },
     {
-      "id": "ef1159f6-44e6-49df-8524-833d3811e22d",
+      "id": "dce12747-d8ba-42b2-b7ed-cb106da33bfa",
+      "name": "Merge: AI + Monthly Data",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        2080,
+        1600
+      ],
+      "parameters": {
+        "mode": "append"
+      }
+    },
+    {
+      "id": "18246d5a-650d-4dd9-b8e5-5924864713ef",
+      "name": "Format Monthly Blocks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2340,
+        1600
+      ],
+      "parameters": {
+        "jsCode": "\n/***\n * Format Monthly Slack Blocks\n ***/\nconst all    = $input.all().map(i => i.json);\nconst data   = all.find(i => i.monthly_payload !== undefined) || all[0];\nconst ai     = (all.find(i => i.output !== undefined) || {}).output || '';\nconst payload = data.monthly_payload || {};\nconst mm      = payload.MM || {};\nconst meta    = payload.meta || {};\n\nconst last   = mm.last?.totals    || {};\nconst prev   = mm.prev?.totals    || {};\nconst mom    = mm.mom             || {};\nconst budget = mm.budget           || {};\nconst ch     = mm.last?.by_channel || {};\n\nconst fmtEur  = n => `\u20ac${Number(n||0).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})}`;\nconst fmtNum  = n => Number(n||0).toLocaleString('de-DE');\nconst fmtRoas = n => Number(n||0).toFixed(2);\nconst fmtMom  = n => n==null ? 'n/a' : `${n>=0?'+':''}${(n*100).toFixed(1)}%`;\n\nconst blocks = [\n  { type: 'header', text: { type: 'plain_text', text: `\ud83d\udcc6 MM Monthly Google Ads \u2013 ${meta.month_label || 'Last Month'}`, emoji: true } },\n  { type: 'divider' },\n  {\n    type: 'section',\n    text: { type: 'mrkdwn', text: '*Monthly performance*' },\n    fields: [\n      { type: 'mrkdwn', text: `*Spend*\\n${fmtEur(last.spend)}\\n_${fmtMom(mom.spend)} MoM_` },\n      { type: 'mrkdwn', text: `*Clicks*\\n${fmtNum(last.clicks)}\\n_${fmtMom(mom.clicks)} MoM_` },\n      { type: 'mrkdwn', text: `*Conversions*\\n${fmtNum(last.conv)}\\n_${fmtMom(mom.conv)} MoM_` },\n      { type: 'mrkdwn', text: `*Efficiency*\\n${fmtRoas(last.roas)}\\n_${fmtMom(mom.roas)} MoM_` },\n      { type: 'mrkdwn', text: `*CPC*\\n${fmtEur(last.cpc)}\\n_${fmtMom(mom.cpc)} MoM_` },\n      { type: 'mrkdwn', text: `*CTR*\\n${((last.ctr||0)*100).toFixed(2)}%\\n_${fmtMom(mom.ctr)} MoM_` },\n    ]\n  },\n];\n\nif (budget.total_budget > 0) {\n  blocks.push({ type: 'section',\n    text: { type: 'mrkdwn', text: `*Budget*   ${fmtEur(budget.total_spend)} of ${fmtEur(budget.total_budget)} (${budget.pct_spent}%)  \u00b7 ${fmtEur(budget.leftover)} leftover` }\n  });\n}\n\nconst chKeys = Object.keys(ch);\nif (chKeys.length > 0) {\n  const chLines = chKeys.map(k => {\n    const b = ch[k];\n    return `\u2022 *${k}*: ${fmtEur(b.spend)} \u00b7 ${fmtNum(b.conv)} conv \u00b7 eff. ${fmtRoas(b.roas)} \u00b7 CTR ${((b.ctr||0)*100).toFixed(2)}% \u00b7 CPC ${fmtEur(b.cpc)}`;\n  }).join('\\n');\n  blocks.push({ type: 'divider' });\n  blocks.push({ type: 'section', text: { type: 'mrkdwn', text: `*Channel breakdown*\\n${chLines}` } });\n}\n\nconst top3    = mm.highs_lows?.top3    || mm.last?.top3_labels    || [];\nconst bottom3 = mm.highs_lows?.bottom3 || mm.last?.bottom3_labels || [];\nif (top3.length || bottom3.length) {\n  blocks.push({ type: 'divider' });\n  blocks.push({ type: 'section', fields: [\n    { type: 'mrkdwn', text: `*\ud83c\udfc6 Top campaigns (efficiency)*\\n${top3.map((n,i)=>`${i+1}. ${n}`).join('\\n')||'n/a'}` },\n    { type: 'mrkdwn', text: `*\u26a0\ufe0f Bottom campaigns*\\n${bottom3.map((n,i)=>`${i+1}. ${n}`).join('\\n')||'n/a'}` },\n  ]});\n}\n\nif (ai) {\n  blocks.push({ type: 'divider' });\n  blocks.push({ type: 'section', text: { type: 'mrkdwn', text: `*\ud83d\udca1 Analysis & Recommendations*\\n${ai.slice(0,3000)}` } });\n}\n\nblocks.push({ type: 'divider' });\nblocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: `_MindMeister Paid \u00b7 Monthly Report \u00b7 ${meta.month_label||''}_` }] });\nreturn [{ json: { blocks, text: `\ud83d\udcc6 MM Monthly Google Ads \u2013 ${meta.month_label||'Last Month'} | Spend: ${fmtEur(last.spend)} | Eff: ${fmtRoas(last.roas)}` } }];\n",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "50c41dfc-0753-431a-87d6-8d4cc28c1c5a",
       "name": "Slack: Monthly Report",
       "type": "n8n-nodes-base.slack",
       "typeVersion": 2.2,
       "position": [
-        1920,
-        1400
+        2600,
+        1600
       ],
       "parameters": {
         "select": "channel",
@@ -831,7 +969,8 @@
           "value": "C08NX15CMEJ",
           "mode": "id"
         },
-        "text": "={{ $json.output }}",
+        "text": "={{ $json.text }}",
+        "blocksUi": "={{ JSON.stringify($json.blocks) }}",
         "otherOptions": {
           "includeLinkToWorkflow": false,
           "botProfile": {
@@ -855,63 +994,101 @@
       "main": [
         [
           {
-            "node": "Get MM Campaigns \u2013 Yesterday",
+            "node": "MM Get yesterday",
             "type": "main",
             "index": 0
           },
           {
-            "node": "Get MM Campaigns \u2013 Last 7 Days",
+            "node": "MM Get day_before_yesterday",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "MM Get last_week (baseline)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Get MM Campaigns \u2013 Yesterday": {
+    "MM Get yesterday": {
       "main": [
         [
           {
-            "node": "Compile: Yesterday",
+            "node": "Compile: yesterday",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Get MM Campaigns \u2013 Last 7 Days": {
+    "MM Get day_before_yesterday": {
       "main": [
         [
           {
-            "node": "Compile: 7-day Avg",
+            "node": "Compile: day_before_yesterday",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Compile: Yesterday": {
+    "MM Get last_week (baseline)": {
       "main": [
         [
           {
-            "node": "Merge: Daily + 7d Avg",
+            "node": "Compile: 7-day baseline",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Compile: 7-day Avg": {
+    "Compile: yesterday": {
       "main": [
         [
           {
-            "node": "Merge: Daily + 7d Avg",
+            "node": "Merge: Daily Pair",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compile: day_before_yesterday": {
+      "main": [
+        [
+          {
+            "node": "Merge: Daily Pair",
             "type": "main",
             "index": 1
           }
         ]
       ]
     },
-    "Merge: Daily + 7d Avg": {
+    "Merge: Daily Pair": {
+      "main": [
+        [
+          {
+            "node": "Merge: All Daily",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compile: 7-day baseline": {
+      "main": [
+        [
+          {
+            "node": "Merge: All Daily",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge: All Daily": {
       "main": [
         [
           {
@@ -929,6 +1106,11 @@
             "node": "Daily AI Agent",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Merge: AI + Daily Data",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -937,14 +1119,14 @@
       "main": [
         [
           {
-            "node": "Slack: Daily Alert",
+            "node": "Merge: AI + Daily Data",
             "type": "main",
-            "index": 0
+            "index": 1
           }
         ]
       ]
     },
-    "Daily: OpenAI Model": {
+    "Daily: Claude Model": {
       "ai_languageModel": [
         [
           {
@@ -961,6 +1143,28 @@
           {
             "node": "Daily AI Agent",
             "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge: AI + Daily Data": {
+      "main": [
+        [
+          {
+            "node": "Format Daily Blocks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Daily Blocks": {
+      "main": [
+        [
+          {
+            "node": "Slack: Daily Alert",
+            "type": "main",
             "index": 0
           }
         ]
@@ -1093,6 +1297,11 @@
             "node": "Weekly AI Agent",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Merge: AI + Weekly Data",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -1101,14 +1310,14 @@
       "main": [
         [
           {
-            "node": "Slack: Weekly Report",
+            "node": "Merge: AI + Weekly Data",
             "type": "main",
-            "index": 0
+            "index": 1
           }
         ]
       ]
     },
-    "Weekly: OpenAI Model": {
+    "Weekly: Claude Model": {
       "ai_languageModel": [
         [
           {
@@ -1130,7 +1339,29 @@
         ]
       ]
     },
-    "Monthly Trigger (1st, 10 AM)": {
+    "Merge: AI + Weekly Data": {
+      "main": [
+        [
+          {
+            "node": "Format Weekly Blocks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Weekly Blocks": {
+      "main": [
+        [
+          {
+            "node": "Slack: Weekly Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Monthly Trigger (1st 10 AM)": {
       "main": [
         [
           {
@@ -1257,6 +1488,11 @@
             "node": "Monthly AI Agent",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Merge: AI + Monthly Data",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -1265,14 +1501,14 @@
       "main": [
         [
           {
-            "node": "Slack: Monthly Report",
+            "node": "Merge: AI + Monthly Data",
             "type": "main",
-            "index": 0
+            "index": 1
           }
         ]
       ]
     },
-    "Monthly: OpenAI Model": {
+    "Monthly: Claude Model": {
       "ai_languageModel": [
         [
           {
@@ -1289,6 +1525,28 @@
           {
             "node": "Monthly AI Agent",
             "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge: AI + Monthly Data": {
+      "main": [
+        [
+          {
+            "node": "Format Monthly Blocks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Monthly Blocks": {
+      "main": [
+        [
+          {
+            "node": "Slack: Monthly Report",
+            "type": "main",
             "index": 0
           }
         ]
