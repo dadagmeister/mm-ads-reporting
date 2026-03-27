@@ -17,7 +17,7 @@ n8n workflow for MindMeister (MM) Google Ads monitoring. See SPEC.md for full de
 ```
 
 ## Key IDs
-- **Workflow ID**: set after first create (update this line)
+- **Workflow ID**: `60jv2dljOjH3MCyJ`
 - **MM Sheet**: `1Uag5Qd7elO6R6S1VLXvWIATfK9MHHbNkr-sNM1BOaX0`
 - **Budget Sheet**: `1u_AiGmpo27x5nGQrhTj91uUez6fYWkhSBjx3k_CIw2I`
 - **Slack test channel**: `C08NX15CMEJ`
